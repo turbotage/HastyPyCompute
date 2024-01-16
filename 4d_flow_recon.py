@@ -4,6 +4,8 @@ import cupyx as cpx
 import cupyx.scipy as cpxsp
 import cufinufft
 
+import svt
+
 import math
 import time
 
@@ -11,58 +13,38 @@ import util
 import load_data
 
 
-def dctprox(image, lamda):
+def dctprox(base_alpha):
 
-    cp.fuse(kernel_name='softmax')
-    def softmax(img):
-        return cp.exp(1j*cp.angle(img)) * cp.maximum(0, (cp.abs(img) - lamda))
+    def dctprox_ret(image, alpha, scratchmem):
 
-    for i in range(image.shape[0]):
-        gpuimg = cpxsp.fft.dctn(cp.array(image[i,...]))
-        gpuimg = softmax(gpuimg)
-        gpuimg = cpxsp.fft.idctn(gpuimg)
-        cp.copyto(image[i,...], gpuimg)
+        lamda = base_alpha * alpha
+
+        cp.fuse(kernel_name='softmax')
+        def softmax(img, lam):
+            return cp.exp(1j*cp.angle(img)) * cp.maximum(0, (cp.abs(img) - lam))
+
+        for i in range(image.shape[0]):
+            gpuimg = cpxsp.fft.dctn(cp.array(image[i,...]))
+            gpuimg = softmax(gpuimg, lamda)
+            gpuimg = cpxsp.fft.idctn(gpuimg)
+            cp.copyto(image[i,...], gpuimg)
+
+    return dctprox_ret
 
 
-def svtprox():
-    print('he')
+def svtprox(base_alpha, blk_shape, blk_strides, block_iter):
 
-            
-def fista(smaps, image, coords, kdata, weights, numiter, alpha, gradient_step, prox):
-    
-    if image.is_pinned != True:
-        raise RuntimeError('image must be in pinned memory')
-    if kdata.is_pinned != True:
-        raise RuntimeError('kdata must be in pinned memory')
-    if smaps.device == cp.cuda.current_device():
-        raise RuntimeError('smaps must be on device')
+    def svtprox_ret(image, alpha, scratchmem):
 
-    t = 1
+        lamda = base_alpha * alpha
 
-    resids = []
+        scratchmem.fill(0.0)
+        svt.svt_numba3(scratchmem, image,  lamda, blk_shape, blk_strides, block_iter, 5)
 
-    image_old = cp.empty_like(image)
-    image_z = cp.empty_like(image)
-    cp.copyto(image_z, image)
+        np.copyto(image, scratchmem)
 
-    def update():
-        cp.copyto(image_old, image)
-        cp.copyto(image, image_z)
-
-        gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), alpha)
-
-        prox(image, alpha)
-
-        t_old = t
-        t = 0.5 * (1.0 + math.sqrt(1.0 + 4.0*t_old*t_old)) 
-
-        cp.subtract(image, image_old, out=image_z)
-        resids.append(np.linalg.norm(image_z))
-        cp.add(image, ((t_old - 1.0) / t) * image_z, out=image_z)
-
-    for i in range(numiter):
-        update()
-    
+    return svtprox_ret
+        
 
 def gradient_step(smaps, image, coords, kdata, weights, device, alpha, full=False):
     with device:
@@ -124,6 +106,48 @@ def gradient_step(smaps, image, coords, kdata, weights, device, alpha, full=Fals
                 backward_plan.execute(kdata * weights, imagemem)
 
             image[i,...] -= sum_smaps_func(imagemem, smaps_gpu, alpha).get()
+
+            
+def fista(smaps, image, coords, kdata, weights, numiter, alpha, gradstep, prox):
+    
+    if image.is_pinned != True:
+        raise RuntimeError('image must be in pinned memory')
+    if kdata.is_pinned != True:
+        raise RuntimeError('kdata must be in pinned memory')
+    if smaps.device == cp.cuda.current_device():
+        raise RuntimeError('smaps must be on device')
+
+    t = 1
+
+    resids = []
+
+    image_old = cp.empty_like(image)
+    image_z = cp.empty_like(image)
+    cp.copyto(image_z, image)
+
+    def update():
+        cp.copyto(image_old, image)
+        cp.copyto(image, image_z)
+
+        gradstep(smaps, image, coords, kdata, weights, cp.cuda.Device(0), alpha)
+
+        prox(image, alpha, image_z)
+
+        t_old = t
+        t = 0.5 * (1.0 + math.sqrt(1.0 + 4.0*t_old*t_old)) 
+
+        cp.subtract(image, image_old, out=image_z)
+        resids.append(np.linalg.norm(image_z))
+        cp.add(image, ((t_old - 1.0) / t) * image_z, out=image_z)
+
+    for i in range(numiter):
+        update()
+    
+
+
+
+
+
 
 
 nx = 160
