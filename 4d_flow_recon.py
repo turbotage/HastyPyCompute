@@ -14,6 +14,7 @@ import load_data
 import asyncio
 
 import load_data
+import coil_est
 
 
 def dctprox(base_alpha):
@@ -157,6 +158,8 @@ def fista(smaps, image, coords, kdata, weights, numiter, alpha, gradstep, prox):
 
 async def main():
 
+    imsize = (160,160,160)
+
     start = time.time()
     dataset = await load_data.load_flow_data('/home/turbotage/Documents/4DRecon/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
     end = time.time()
@@ -167,20 +170,28 @@ async def main():
     end = time.time()
     print(f"Gate Time={end - start} s")
 
+    start = time.time()
+    dataset = await load_data.flatten(dataset)
+    end = time.time()
+    print(f"Flatten Time={end - start} s")
 
-    nx = 160
-    ny = 160
-    nz = 160
-    nframe = 80*5
-    ncoil = 32
-    nupts = 110000
+    start = time.time()
+    dataset = await load_data.crop_kspace(dataset, imsize)
+    end = time.time()
+    print(f"Crop Time={end - start} s")
 
-    image = util.complex_rand((nframe, nx, ny, nz))
-    smaps = util.complex_rand((ncoil, nx, ny, nz))
-    kdata = util.rand_vector((ncoil, nupts), nframe, dtype=np.complex64)
-    coords = util.rand_vector((3,nupts), nframe, [-3.1415, 3.1415], np.float32)
-    weights = util.rand_vector((nupts,), nframe)
+    #image = util.complex_rand((nframe, nx, ny, nz))
+    #smaps = util.complex_rand((ncoil, nx, ny, nz))
+    #kdata = util.rand_vector((ncoil, nupts), nframe, dtype=np.complex64)
+    #coords = util.rand_vector((3,nupts), nframe, [-3.1415, 3.1415], np.float32)
+    #weights = util.rand_vector((nupts,), nframe)
 
+    smaps = coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
+                                      tukey_param=(0.95, 0.95, 0.95), exponent=3)
+
+
+
+    print('H')
 
     if False:
         start = time.time()

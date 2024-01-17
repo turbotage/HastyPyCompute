@@ -32,14 +32,14 @@ def _load_one_encode(i, settings):
             for j in range(len(keys)):
                 coilname = 'KData_E'+str(i)+'_C'+str(j)
                 if coilname in kdataset:
-                    kdata.append(kdataset[coilname]['real'] + kdataset[coilname]['imag'])
+                    kdata.append(kdataset[coilname]['real'] + 1j*kdataset[coilname]['imag'])
             kdata = np.squeeze(np.stack(kdata, axis=0))
-            ret += (('kdata', kdata),)
+            ret += (('kdatas', kdata),)
 
         return ret
 
 async def load_flow_data(file, num_encodes=5, load_coords=True, load_kdata=True, 
-        load_weights=True, load_gating=True, gating_names=[]):
+        load_weights=True, gating_names=[]):
 
     settings = {
                 'file': file,
@@ -57,7 +57,7 @@ async def load_flow_data(file, num_encodes=5, load_coords=True, load_kdata=True,
     for encode in range(num_encodes):
         futures.append(loop.run_in_executor(executor, _load_one_encode, encode, settings))
 
-    if load_gating:
+    if len(gating_names) > 0:
         with h5py.File(file, 'r') as f:
             gatingset = f['Gating']
 
@@ -80,7 +80,7 @@ async def load_flow_data(file, num_encodes=5, load_coords=True, load_kdata=True,
         ret['coords'] = [get_val('coords', resvec) for resvec in futures]
 
     if load_kdata:
-        ret['kdata'] = [get_val('kdata', resvec) for resvec in futures]
+        ret['kdatas'] = [get_val('kdatas', resvec) for resvec in futures]
 
     if load_weights:
         ret['weights'] = [get_val('weights', resvec) for resvec in futures]
@@ -98,7 +98,7 @@ async def gate_time(dataset, num_encodes=5):
         c = dataset['coords'][encode]
         c[:] = c[:,timeidx,:]
 
-        k = dataset['kdata'][encode]
+        k = dataset['kdatas'][encode]
         k[:] = k[:,timeidx,:]
 
         if 'weights' in dataset:
@@ -116,12 +116,14 @@ async def gate_time(dataset, num_encodes=5):
     return dataset
 
 
-async def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
+async def crop_kspace(dataset, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
 
     kim_size = tuple(0.5*im_size[i]*crop_factors[i] for i in range(3))
     
     cp.fuse(kernel_name='crop_func')
     def crop_func(c, k, w):
+
+        upp_bound = 0.99999*cp.pi
         c[0,:] *= prefovkmuls[0]
         c[1,:] *= prefovkmuls[1]
         c[2,:] *= prefovkmuls[2]
@@ -132,7 +134,7 @@ async def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.
 
         idx = cp.logical_and(idxx, cp.logical_and(idxy, idxz))
 
-        c = coord[:,idx]
+        c = c[:,idx]
         c[0,:] *= postfovkmuls[0] * cp.pi / kim_size[0]
         c[1,:] *= postfovkmuls[1] * cp.pi / kim_size[1]
         c[2,:] *= postfovkmuls[2] * cp.pi / kim_size[2]
@@ -143,34 +145,51 @@ async def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.
         
         if w is not None:
             w = w[idx]
-
-
-    mem_stream = cp.cuda.Stream(non_blocking=True)
-
-    upp_bound = 0.99999*cp.pi
-    for i in range(len(coords)):
-        coord = cp.empty_like(coords[i])
-        coord.set(coords[i], stream=mem_stream)
-
-        kdata = cp.empty_like(kdatas[i])
-        kdata.set(kdatas[i], stream=mem_stream)
-
-        if weights is not None:
-            weight = cp.empty_like(weights[i])
-            weight.set(weights[i], stream=mem_stream)
-        else:
-            weight = None
-
-        mem_stream.synchronize()
-        crop_func(coord, kdata, weight)
-        mem_stream.synchronize()
-
-        coords[i] = coord.get(mem_stream)
-        kdatas[i] = kdata.get(mem_stream)
-        weight[i] = weight.get(mem_stream)
         
+        return c, k, w
+
+    def crop_one(coords, kdatas, weights):
+        with cp.cuda.Stream(non_blocking=True) as stream:
+            coordscu = cp.array(coords)
+
+            kdatascu = cp.array(kdatas)
+
+            if weights is not None:
+                weightscu = cp.array(weights)
+            else:
+                weightscu = None
+
+            coordscu, kdatascu, weightscu = crop_func(coordscu, kdatascu, weightscu)
+
+            coords = coordscu.get()
+            kdatas = kdatascu.get()
+            if weights is not None:
+                weights = weightscu.get()
+
+            return coords, kdatas, weights
+
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    veclen = len(dataset['coords'])
+
+    futures = []
+    for i in range(veclen):
+        futures.append(loop.run_in_executor(executor, crop_one, dataset['coords'][i],
+            dataset['kdatas'][i], dataset['weights'][i]))
+        
+    for i in range(veclen):
+        futtup = await futures[i]
+
+        dataset['coords'][i] = futtup[0]
+        dataset['kdatas'][i] = futtup[1]
+
+        if 'weights' in dataset:
+            dataset['weights'][i] = futtup[2]
+
+    return dataset
     
-    return (coords, kdatas, weights)
+    
 
 
 async def translate(coord_vec, kdata_vec, translation):
@@ -199,6 +218,22 @@ async def translate(coord_vec, kdata_vec, translation):
 
     return kdata_vec
 
+
+async def flatten(dataset, num_encodes=5):
+    if 'coords' in dataset:
+        for enc in range(num_encodes):
+            c = dataset['coords'][enc]
+            dataset['coords'][enc] = c.reshape((c.shape[0],np.prod(c.shape[1:])))
+    if 'kdatas' in dataset:
+        for enc in range(num_encodes):
+            k = dataset['kdatas'][enc]
+            dataset['kdatas'][enc] = k.reshape((k.shape[0],np.prod(k.shape[1:])))
+    if 'weights' in dataset:
+        for enc in range(num_encodes):
+            w = dataset['weights'][enc]
+            dataset['weights'][enc] = w.reshape((np.prod(w.shape),))
+
+    return dataset
 
 
 #start = time.time()
