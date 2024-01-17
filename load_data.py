@@ -1,7 +1,10 @@
 import h5py
 import numpy as np
 import cupy as cp
-import multiprocessing as mp
+
+import asyncio
+import concurrent
+
 import time
 
 
@@ -13,15 +16,15 @@ def _load_one_encode(i, settings):
         ret = ()
 
         if settings['load_coords']:
-            coord = np.stack([
+            coord = np.squeeze(np.stack([
                         kdataset['KX_E'+str(i)][()],
                         kdataset['KY_E'+str(i)][()],
                         kdataset['KZ_E'+str(i)][()]
-                    ], axis=0)
+                    ], axis=0))
             ret += (('coords', coord),)
             
         if settings['load_weights']:
-            weights = kdataset['KW_E'+str(i)][()]
+            weights = np.squeeze(kdataset['KW_E'+str(i)][()])
             ret += (('weights', weights),)
 
         if settings['load_kdata']:
@@ -30,12 +33,12 @@ def _load_one_encode(i, settings):
                 coilname = 'KData_E'+str(i)+'_C'+str(j)
                 if coilname in kdataset:
                     kdata.append(kdataset[coilname]['real'] + kdataset[coilname]['imag'])
-            kdata = np.stack(kdata, axis=0)
+            kdata = np.squeeze(np.stack(kdata, axis=0))
             ret += (('kdata', kdata),)
 
         return ret
 
-def load_five_point(file, load_coords=True, load_kdata=True, 
+async def load_flow_data(file, num_encodes=5, load_coords=True, load_kdata=True, 
         load_weights=True, load_gating=True, gating_names=[]):
 
     settings = {
@@ -45,23 +48,24 @@ def load_five_point(file, load_coords=True, load_kdata=True,
                 'load_weights': load_weights
                 }
 
-    with mp.Pool(processes=5) as pool:
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_encodes)
 
-        ret = {}
+    ret = {}
 
-        results = [pool.apply_async(_load_one_encode, (i,settings)) for i in range(5)]
+    futures = []
+    for encode in range(num_encodes):
+        futures.append(loop.run_in_executor(executor, _load_one_encode, encode, settings))
 
-        if load_gating:
-            with h5py.File(file, 'r') as f:
-                gatingset = f['Gating']
+    if load_gating:
+        with h5py.File(file, 'r') as f:
+            gatingset = f['Gating']
 
-                gating = {}
-                for gatename in gating_names:
-                    gating[gatename] = gatingset[gatename][()]
+            gating = {}
+            for gatename in gating_names:
+                gating[gatename] = np.squeeze(gatingset[gatename][()])
 
-                ret['gating'] = gating
-
-        results = [res.get() for res in results]
+            ret['gating'] = gating
 
     def get_val(key, resvec):
         for res in resvec:
@@ -70,26 +74,49 @@ def load_five_point(file, load_coords=True, load_kdata=True,
                 del res
                 return ret
 
+    futures = [await fut for fut in futures]
+
     if load_coords:
-        ret['coords'] = [get_val('coords', resvec) for resvec in results]
+        ret['coords'] = [get_val('coords', resvec) for resvec in futures]
 
     if load_kdata:
-        ret['kdata'] = [get_val('kdata', resvec) for resvec in results]
+        ret['kdata'] = [get_val('kdata', resvec) for resvec in futures]
 
     if load_weights:
-        ret['weights'] = [get_val('weights', resvec) for resvec in results]
+        ret['weights'] = [get_val('weights', resvec) for resvec in futures]
 
     return ret
 
 
-
-
-def gate_time(kdata_vec, coords, weights):
-
+async def gate_time(dataset, num_encodes=5):
+    time_gating = dataset['gating']['TIME_E0']
     
-    print('Hello')
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_encodes)
 
-def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
+    def do_gating(dataset, timeidx, encode):
+        c = dataset['coords'][encode]
+        c[:] = c[:,timeidx,:]
+
+        k = dataset['kdata'][encode]
+        k[:] = k[:,timeidx,:]
+
+        if 'weights' in dataset:
+            w = dataset['weights'][encode]
+            w[:] = w[timeidx,:]
+
+    timeidx = np.argsort(time_gating)
+    futures = []
+    for encode in range(num_encodes):
+        futures.append(loop.run_in_executor(executor, do_gating, dataset, timeidx, encode))
+
+    for fut in futures:
+        await fut
+
+    return dataset
+
+
+async def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
 
     kim_size = tuple(0.5*im_size[i]*crop_factors[i] for i in range(3))
     
@@ -146,7 +173,7 @@ def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), pr
     return (coords, kdatas, weights)
 
 
-def translate(coord_vec, kdata_vec, translation):
+async def translate(coord_vec, kdata_vec, translation):
 
     cp.fuse(kernel_func='translace_func')
     def translate_func(k, m, c):

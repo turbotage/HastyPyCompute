@@ -13,6 +13,8 @@ import util
 import load_data
 import asyncio
 
+import load_data
+
 
 def dctprox(base_alpha):
 
@@ -149,45 +151,61 @@ def fista(smaps, image, coords, kdata, weights, numiter, alpha, gradstep, prox):
 
 
 
-nx = 160
-ny = 160
-nz = 160
-nframe = 80*5
-ncoil = 32
-nupts = 110000
-
-image = util.complex_rand((nframe, nx, ny, nz))
-smaps = util.complex_rand((ncoil, nx, ny, nz))
-kdata = util.rand_vector((ncoil, nupts), nframe, dtype=np.complex64)
-coords = util.rand_vector((3,nupts), nframe, [-3.1415, 3.1415], np.float32)
-weights = util.rand_vector((nupts,), nframe)
 
 
 
 
-if True:
+async def main():
+
     start = time.time()
-
-    output = np.empty_like(image)
-    asyncio.run(svt.my_svt3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5))
-    #svt.svt_numba3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5)
-
+    dataset = await load_data.load_flow_data('/home/turbotage/Documents/4DRecon/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
     end = time.time()
-
-    print(f"Time: {end - start}")
-
-
-if False:
+    print(f"Load Time={end - start} s")
+    
     start = time.time()
-
-    gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), 0.1)
-    cp.cuda.stream.get_current_stream().synchronize()
-
+    dataset = await load_data.gate_time(dataset)
     end = time.time()
+    print(f"Gate Time={end - start} s")
 
-    print(f"Time: {end - start}")
+
+    nx = 160
+    ny = 160
+    nz = 160
+    nframe = 80*5
+    ncoil = 32
+    nupts = 110000
+
+    image = util.complex_rand((nframe, nx, ny, nz))
+    smaps = util.complex_rand((ncoil, nx, ny, nz))
+    kdata = util.rand_vector((ncoil, nupts), nframe, dtype=np.complex64)
+    coords = util.rand_vector((3,nupts), nframe, [-3.1415, 3.1415], np.float32)
+    weights = util.rand_vector((nupts,), nframe)
 
 
-print('Hello')
+    if False:
+        start = time.time()
+
+        output = np.empty_like(image)
+        asyncio.run(svt.my_svt3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5))
+        #svt.svt_numba3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5)
+
+        end = time.time()
+
+        print(f"Time: {end - start}")
+
+
+    if False:
+        start = time.time()
+
+        gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), 0.1)
+        cp.cuda.stream.get_current_stream().synchronize()
+
+        end = time.time()
+
+        print(f"Time: {end - start}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 
