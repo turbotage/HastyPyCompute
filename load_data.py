@@ -82,6 +82,13 @@ def load_five_point(file, load_coords=True, load_kdata=True,
     return ret
 
 
+
+
+def gate_time(kdata_vec, coords, weights):
+
+    
+    print('Hello')
+
 def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
 
     kim_size = tuple(0.5*im_size[i]*crop_factors[i] for i in range(3))
@@ -140,7 +147,6 @@ def crop_kspace(coords, kdatas, weights, im_size, crop_factors=(1.0,1.0,1.0), pr
 
 
 def translate(coord_vec, kdata_vec, translation):
-
 
     cp.fuse(kernel_func='translace_func')
     def translate_func(k, m, c):

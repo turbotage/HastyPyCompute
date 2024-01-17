@@ -1,91 +1,187 @@
 import math
 import numba as nb
+import cupy as cp
 import numpy as np
+import time
+
+import asyncio
+import concurrent
+
+@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
+def block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames):
+
+    bx = br[0]
+    by = br[1]
+    bz = br[2]
+
+    Sx = Sr[0]
+    Sy = Sr[1]
+    Sz = Sr[2]
+
+    shiftz = shifts[0, iter]
+    shifty = shifts[1, iter]
+    shiftx = shifts[2, iter]
+
+    large_block = np.empty((bx * by * bz, bshape[0]*bshape[1]*bshape[2]*num_encodes, num_frames), dtype=np.complex64)
+
+    block_counter = 0
+    for nz in nb.prange(bz):
+        sz = nz * bstrides[0] + shiftz
+        ez = sz + bshape[0]
+
+        for ny in range(by):
+            sy = ny * bstrides[1] + shifty
+            ey = sy + bshape[1]
+
+            for nx in range(bx):
+                sx = nx * bstrides[2] + shiftx
+                ex = sx + bshape[2]
+
+                for tframe in range(num_frames):
+                    count = 0
+                    for encode in range(num_encodes):
+                        store_pos = int(tframe * num_encodes + encode)
+                        for k in range(sz, ez):
+                            for j in range(sy, ey):
+                                for i in range(sx, ex):
+                                    large_block[block_counter, count, tframe] = input[store_pos, k % Sz, j % Sy, i % Sx]
+                                    count += 1
+
+                block_counter += 1
+
+    return large_block
+
+def block_fetcher_3d(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames):
+    return block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames)
+
+@nb.jit(nopython=True, cache=True, parallel=True)
+def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
+    bx = br[0]
+    by = br[1]
+    bz = br[2]
+
+    Sx = Sr[0]
+    Sy = Sr[1]
+    Sz = Sr[2]
+
+    shiftz = shifts[0, iter]
+    shifty = shifts[1, iter]
+    shiftx = shifts[2, iter]
+
+    block_counter = 0
+    for nz in nb.prange(bz):
+        sz = nz * bstrides[0] + shiftz
+        ez = sz + bshape[0]
+
+        for ny in range(by):
+            sy = ny * bstrides[1] + shifty
+            ey = sy + bshape[1]
+
+            for nx in range(bx):
+                sx = nx * bstrides[2] + shiftx
+                ex = sx + bshape[2]
+
+                # Put block back
+                for tframe in range(num_frames):
+                    count = 0
+                    for encode in range(num_encodes):
+                        store_pos = int(tframe * num_encodes + encode)
+                        for k in range(sz, ez):
+                            for j in range(sy, ey):
+                                for i in range(sx, ex):
+                                    # output[store_pos, k % Sz, j % Sy, i % Sx] += scale*block[tframe, count]
+                                    output[store_pos, k % Sz, j % Sy, i % Sx] += scale*large_block[block_counter, count, tframe]
+                                    count += 1
+
+                block_counter += 1
+
+    return large_block
+
+def block_pusher_3d(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
+    return block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale)
 
 
-@nb.jit(nopython=True, cache=True, parallel=True)  # pragma: no cover
-def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_encodes):
 
-    bz = input.shape[1] // blk_strides[0]
-    by = input.shape[2] // blk_strides[1]
-    bx = input.shape[3] // blk_strides[2]
 
-    Sz = int(input.shape[1])
-    Sy = int(input.shape[2])
-    Sx = int(input.shape[3])
+
+
+
+
+
+
+
+
+
+@cp.fuse(kernel_name='thresh_blocks_cupy')
+def softthresh_func(s, lamda):
+    return cp.maximum(0, (cp.abs(s) - lamda))
+
+def thresh_blocks(lblock, lamda, max_run_blocks):
+    stream = cp.cuda.Stream(non_blocking=True)
+
+    runs = lblock.shape[0] // max_run_blocks
+    with stream:
+        for i in range(runs):
+            offset = i*max_run_blocks
+            cu_lblock = cp.array(lblock[offset:(offset + max_run_blocks),...])
+            u, s, v = cp.linalg.svd(cu_lblock, full_matrices=False)
+            s = softthresh_func(s, lamda)
+            cu_lblock = u @ (s[...,None] * v)
+            lblock[offset:(offset + max_run_blocks),...] = cu_lblock.get()
+
+    return lblock
+            
+
+
+
+
+
+
+async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_encodes):
+
+    br = np.array([input.shape[1] // blk_strides[0], input.shape[2] // blk_strides[1], input.shape[3] // blk_strides[2]])
+
+    Sr = np.array([int(input.shape[1]), int(input.shape[2]), int(input.shape[3])])
 
     scale = float(1.0 / block_iter)
 
     num_frames = int(input.shape[0]/num_encodes)
-    # bmat_shape = (num_frames, num_encodes*blk_shape[0] * blk_shape[1] * blk_shape[2])
-    bmat_shape = (num_encodes*blk_shape[0] * blk_shape[1] * blk_shape[2], num_frames)
 
     shifts = np.zeros((3, block_iter), np.int32)
     for d in range(3):
         for biter in range(block_iter):
             shifts[d,biter] = np.random.randint(blk_shape[d])
 
+    lock = asyncio.Lock()
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
 
-    @nb.jit(nopython=True, cache=True, parallel=True)
-    def block_fetcher(shiftz, shifty, shiftx):
+    def fetch_and_thresh(iter):
+        start = time.time()
+        large_block =  block_fetcher_3d(input, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames)
+        end = time.time()
+        print(f"Fetcher Time = {end - start}")
 
-        large_block = np.empty(bx * by * bz, blk_shape[0]*blk_shape[1]*blk_shape[2]*num_encodes, num_frames, dtype=np.complex64)
-
-        block_counter = 0
-        for nz in nb.prange(bz):
-            sz = nz * blk_strides[0] + shiftz
-            ez = sz + blk_shape[0]
-
-            for ny in range(by):
-                sy = ny * blk_strides[1] + shifty
-                ey = sy + blk_shape[1]
-
-                for nx in range(bx):
-
-                    sx = nx * blk_strides[2] + shiftx
-                    ex = sx + blk_shape[2]
-
-                    
-                    # Grab a block
-                    for tframe in range(num_frames):
-                        count = 0
-                        for encode in range(num_encodes):
-                            store_pos = int(tframe * num_encodes + encode)
-                            for k in range(sz, ez):
-                                for j in range(sy, ey):
-                                    for i in range(sx, ex):
-                                        # block[tframe, count] = input[store_pos, k % Sz, j % Sy, i % Sx]
-                                        large_block[block_counter, count, tframe] = input[store_pos, k % Sz, j % Sy, i % Sx]
-                                        count += 1
-
-                    block_counter += 1
+        start = time.time()
+        large_block = thresh_blocks(large_block, lamda, 50)
+        end = time.time()
+        print(f"SoftThresh Time = {end - start}")
 
         return large_block
 
-
-
+    futures = []
+    for iter in range(block_iter):
+        futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter))
 
     for iter in range(block_iter):
-        #print('block iter = ',iter)
-        shiftz = shifts[0, iter]
-        shifty = shifts[1, iter]
-        shiftx = shifts[2, iter]
+        
+        large_block = await futures[iter]
 
+        start = time.time()
+        block_pusher_3d(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames, scale)
+        end = time.time()
+        print(f"Pusher Time = {end - start}")
 
-
-
-
-    # Put block back
-    for tframe in range(num_frames):
-        count = 0
-        for encode in range(num_encodes):
-            store_pos = int(tframe * num_encodes + encode)
-            for k in range(sz, ez):
-                for j in range(sy, ey):
-                    for i in range(sx, ex):
-                        # output[store_pos, k % Sz, j % Sy, i % Sx] += scale*block[tframe, count]
-                        output[store_pos, k % Sz, j % Sy, i % Sx] += scale*block[count, tframe]
-                        count += 1
 
     return output
 

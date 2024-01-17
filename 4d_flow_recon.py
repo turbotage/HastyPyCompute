@@ -11,6 +11,7 @@ import time
 
 import util
 import load_data
+import asyncio
 
 
 def dctprox(base_alpha):
@@ -148,12 +149,10 @@ def fista(smaps, image, coords, kdata, weights, numiter, alpha, gradstep, prox):
 
 
 
-
-
 nx = 160
 ny = 160
 nz = 160
-nframe = 80
+nframe = 80*5
 ncoil = 32
 nupts = 110000
 
@@ -165,14 +164,28 @@ weights = util.rand_vector((nupts,), nframe)
 
 
 
-start = time.time()
 
-gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), 0.1)
-cp.cuda.stream.get_current_stream().synchronize()
+if True:
+    start = time.time()
 
-end = time.time()
+    output = np.empty_like(image)
+    asyncio.run(svt.my_svt3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5))
+    #svt.svt_numba3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5)
 
-print(f"Time: {end - start}")
+    end = time.time()
+
+    print(f"Time: {end - start}")
+
+
+if False:
+    start = time.time()
+
+    gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), 0.1)
+    cp.cuda.stream.get_current_stream().synchronize()
+
+    end = time.time()
+
+    print(f"Time: {end - start}")
 
 
 print('Hello')
