@@ -1,9 +1,11 @@
 import cupy as cp
 import cufinufft
 from scipy.signal import tukey
+import math
 
 import grad
 import solvers
+import prox
 
 def low_res_sensemap(coord, kdata, weights, im_size, tukey_param=(0.95, 0.95, 0.95), exponent=3):
 
@@ -48,37 +50,43 @@ def low_res_sensemap(coord, kdata, weights, im_size, tukey_param=(0.95, 0.95, 0.
 	else:
 		raise RuntimeError('Not Implemented Dimension')
 
-def isense(i, s, coord, kdata, weights, iter=[10,[10,10]], lamda=[0.1, 0.1]):
+async def isense(i, s, coord, kdata, weights, devicectx: grad.DeviceCtx, iter=[10,[10,10]], lamda=[0.1, 0.1]):
 	dev = cp.cuda.Device(0)
 
+	normfactor = 1.0 / math.sqrt(math.prod(s.shape[1:]))
+
 	def snormal(s):
-		sup = cp.copy(s)
-		sup *= i
-		kout = cp.empty_like(kdata)
-		sout = cp.empty_like(sup)
-		cufinufft.nufft3d2(coord[0,:], coord[1,:], coord[2,:], sup, out=kout, eps=1e-5)
-		kout *= weights
-		cufinufft.nufft3d1(coord[0,:], coord[1,:], coord[2,:], kout, sup.shape, out=sout, eps=1e-5)
-		sout *= cp.conj(i)
-		return sout
+		
+
 
 	def inormal(i):
 		iup = cp.copy(i)
-		iup *= s
+		iup = iup * s
 		kout = cp.empty_like(kdata)
-		xout = cp.empty_like(i)
+		xout = cp.empty_like(s)
 		cufinufft.nufft3d2(coord[0,:], coord[1,:], coord[2,:], iup, out=kout, eps=1e-5)
+		kout *= normfactor
 		kout *= weights
 		cufinufft.nufft3d1(coord[0,:], coord[1,:], coord[2,:], kout, iup.shape, out=xout, eps=1e-5)
+		xout *= normfactor
 		xout *= cp.conj(s)
-		return xout
+		return cp.sum(xout, axis=0)
 
-	alpha_s = 1 / solvers.max_eig(snormal, s, 8)
 	alpha_i = 1 / solvers.max_eig(inormal, i, 8)
 
+	devicectx = grad.DeviceCtx(cp.cuda.Device(0), s.shape[0], s.shape[1:], "full")
 
-	grads = lambda smp, a: grad.gradient_step_s(smp, i, coord, kdata, weights, dev, a)
-	gradx = lambda ximg, a: grad.gradient_step_x(s, ximg, coord, kdata, weights, dev, a, True)
+	async def gradx(ximg, a):
+		await grad.device_gradient_step_x(s, ximg, coord, kdata, weights, alpha_i, devicectx)
+
+	proxx = prox.dctprox(lamda[0])
+
+	solvers.fista(cp, i, alpha_i, gradx, proxx, 10)
+
+	alpha_s = 1 / solvers.max_eig(snormal, s, 8)
+
+	async def grads(smp, a):
+		await grad.gradient_step_s(smp, i, coord, kdata, weights, dev, a)
 
 	def update():
 		pass
