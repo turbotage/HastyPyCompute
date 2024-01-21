@@ -116,6 +116,32 @@ async def gate_time(dataset, num_encodes=5):
     return dataset
 
 
+def save_processed_dataset(dataset, filename):
+    with h5py.File(filename, 'w') as f:
+        for key in dataset:
+            val = dataset[key]
+            if isinstance(val, list):
+                group = f.create_group(key)
+                for idx, v in enumerate(val):
+                    if not isinstance(v, np.ndarray):
+                        raise RuntimeError("Lists can only contain numpy arrays")
+                    group.create_dataset(str(idx), data=v)
+            elif isinstance(val, np.ndarray):
+                group = f.create_group(key)
+                group.create_dataset('0', data=val)
+
+def load_processed_dataset(filename):
+    with h5py.File(filename, 'r') as f:
+        ret = {}
+        for key in f.keys():
+            group = f[key]
+            if len(group.keys()) == 0:
+                ret[key] = group['0'][()]
+            else:
+                ret[key] = [group[gkey][()] for gkey in group.keys()]
+        return ret
+
+
 async def crop_kspace(dataset, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):
 
     kim_size = tuple(0.5*im_size[i]*crop_factors[i] for i in range(3))

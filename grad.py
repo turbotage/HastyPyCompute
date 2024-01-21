@@ -105,6 +105,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 	with devicectx.device:
 		ncoils = smaps.shape[0]
 		numframes = images.shape[0]
+		ntransf = devicectx.ntransf
 
 		if ntransf is None:
 			ntransf = ncoils
@@ -126,9 +127,9 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 
 		runs = int(ncoils / ntransf)
 		for frame in range(numframes):
-			image_frame = cp.array(images[i,...], copy=False)
-			weights_frame = cp.array(weights[i], copy=False)
-			coord_frame = cp.array(coords[i], copy=False)
+			image_frame = cp.array(images[frame,...], copy=False)
+			weights_frame = cp.array(weights[frame], copy=False)
+			coord_frame = cp.array(coords[frame], copy=False)
 
 			for run in range(runs):
 				start = run * ntransf
@@ -137,7 +138,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 					kdata_frame = cp.array(kdatas[frame][start:start+ntransf,...], copy=False)
 					kdatamem = cp.empty_like(kdata_frame)
 				else:
-					kdatamem = cp.empty((ntransf,coord_frame[1]), dtype=image_frame.dtype)
+					kdatamem = cp.empty((ntransf,coord_frame.shape[1]), dtype=image_frame.dtype)
 
 				locals = smaps_gpu[start:start+ntransf,...]
 
@@ -156,14 +157,17 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 				
 				if alpha is None:
 					if images.device == devicectx.device:
-						images[frame,...] = sum_smaps_func(imagemem, locals, 1.0)
+						images_out[frame,...] = sum_smaps_func(imagemem, locals, 1.0)
 					else:
-						images[frame,...] = sum_smaps_func(imagemem, locals, 1.0).get()
+						images_out[frame,...] = sum_smaps_func(imagemem, locals, 1.0).get()
 				else:
 					if images.device == devicectx.device:
 						images[frame,...] -= sum_smaps_func(imagemem, locals, alpha)
 					else:
 						images[frame,...] -= sum_smaps_func(imagemem, locals, alpha).get()
+
+		if alpha is None:
+			return images_out
 
 async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list[DeviceCtx]):
 	numframes = images.shape[0]
@@ -197,9 +201,16 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 			alpha, devicectxs[devindex]))
 		start = end
 	
-	
-	for fut in futures:
-		await futures
+
+	start = 0
+	for i in range(len(futures)):
+		end = start + frames_per_device[i]
+
+		if alpha is None:
+			images_out[start:end,...] = await futures[i]
+		else:
+			await futures
+
 
 
 

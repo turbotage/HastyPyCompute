@@ -7,7 +7,7 @@ import svt
 
 def dctprox(base_alpha):
 
-    def dctprox_ret(image, alpha, scratchmem):
+    async def dctprox_ret(image, alpha, scratchmem):
 
         lamda = base_alpha * alpha
 

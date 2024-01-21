@@ -1,6 +1,14 @@
 import numpy as np
 
 
+#def rand_like(shape, dtype):
+#    if dtype == np.complex64:
+#        
+#    elif dtype == np.complex128:
+#        
+#    else:
+        
+
 def complex_rand(shape, dtype=np.float32):
     return np.random.rand(*shape).astype(dtype) + 1j*np.random.rand(*shape).astype(dtype)
 
