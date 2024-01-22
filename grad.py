@@ -4,6 +4,7 @@ import cupyx as cpx
 import cupyx.scipy as cpxsp
 import cufinufft
 import math
+import util
 
 import asyncio
 import concurrent
@@ -40,7 +41,7 @@ class DeviceCtx:
 			elif type == "none":
 				self.forward_plan = None
 			else:
-				self.forward_plan = cufinufft.Plan(ufft_type=2, n_modes=imshape, 
+				self.forward_plan = cufinufft.Plan(nufft_type=2, n_modes=imshape, 
 					n_trans=ntransf, eps=1e-4, dtype="complex64",
 					gpu_device_id=device.id)
 		else:
@@ -93,14 +94,17 @@ class DeviceCtx:
 
 	def forward_execute(self, input, out):
 		if self.forward_plan is not None:
-			self.forward_plan.execute(input, out) * self.normfactor
+			self.forward_plan.execute(input, out)
+			out *= self.normfactor
 
 	def backward_execute(self, input, out):
 		if self.backward_plan is not None:
-			self.backward_plan.execute(input, out) * self.normfactor
+			input *= self.normfactor
+			self.backward_plan.execute(input, out)
+			#out *= self.normfactor
 
 
-# Inputs shall be on CPU
+# Inputs shall be on CPU or GPU, computes x = x - alpha * S^HN^H(W(NSx-b)) or returns S^HN^HWN^HSx
 async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx):
 	with devicectx.device:
 		ncoils = smaps.shape[0]
@@ -115,7 +119,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 		smaps_gpu = cp.array(smaps)
 
 		if alpha is None:
-			images_out = images.copy()
+			images_out = util.get_array_backend(images).zeros_like(images)
 
 		cp.fuse(kernel_name='weights_and_kdata_func')
 		def weights_and_kdata_func(kdmem, kd, w):
@@ -123,7 +127,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 		
 		cp.fuse(kernel_name='sum_smaps_func')
 		def sum_smaps_func(imgmem, s, alpha):
-			return alpha * cp.sum(imgmem * cp.conj(s))
+			return alpha * cp.sum(imgmem * cp.conj(s), axis=0)
 
 		runs = int(ncoils / ntransf)
 		for frame in range(numframes):
@@ -131,22 +135,20 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 			weights_frame = cp.array(weights[frame], copy=False)
 			coord_frame = cp.array(coords[frame], copy=False)
 
+			devicectx.setpts(coord_frame)
 			for run in range(runs):
 				start = run * ntransf
 
 				if kdatas is not None:
 					kdata_frame = cp.array(kdatas[frame][start:start+ntransf,...], copy=False)
-					kdatamem = cp.empty_like(kdata_frame)
-				else:
-					kdatamem = cp.empty((ntransf,coord_frame.shape[1]), dtype=image_frame.dtype)
+					
+				kdatamem = cp.empty((ntransf,coord_frame.shape[1]), dtype=image_frame.dtype)
 
 				locals = smaps_gpu[start:start+ntransf,...]
 
 				imagemem = locals * image_frame
 
-				devicectx.setpts(coord_frame)
-
-				devicectx.forward_execute(imagemem, kdatamem)
+				devicectx.forward_execute(imagemem, out=kdatamem)
 
 				if kdatas is not None:
 					kdatamem = weights_and_kdata_func(kdatamem, kdata_frame, weights_frame)
@@ -157,9 +159,9 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 				
 				if alpha is None:
 					if images.device == devicectx.device:
-						images_out[frame,...] = sum_smaps_func(imagemem, locals, 1.0)
+						images_out[frame,...] += sum_smaps_func(imagemem, locals, 1.0)
 					else:
-						images_out[frame,...] = sum_smaps_func(imagemem, locals, 1.0).get()
+						images_out[frame,...] += sum_smaps_func(imagemem, locals, 1.0).get()
 				else:
 					if images.device == devicectx.device:
 						images[frame,...] -= sum_smaps_func(imagemem, locals, alpha)
@@ -235,13 +237,10 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 
 			if kdatas is not None:
 				kd = cp.array(kdatas[start:start+ntransf,...], copy=False)
-				kdmem = cp.empty_like(kd)
-			else:
-				kdmem = cp.empty((ntransf,coords[1]), dtype=images.dtype)
-
+			
+			kdmem = cp.empty((ntransf,coords.shape[1]), dtype=images.dtype)
 
 			smem = images * smaps[start:start+ntransf,...]
-
 
 			devicectx.forward_execute(smem, kdmem)
 

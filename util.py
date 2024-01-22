@@ -1,4 +1,5 @@
 import numpy as np
+import cupy as cp
 
 
 #def rand_like(shape, dtype):
@@ -8,6 +9,13 @@ import numpy as np
 #        
 #    else:
         
+def get_array_backend(arr):
+    if isinstance(arr, cp.ndarray):
+        return cp
+    elif isinstance(arr, np.ndarray):
+        return np
+    else:
+        raise ValueError(f"Unsupported array type: {type(arr)}")
 
 def complex_rand(shape, dtype=np.float32):
     return np.random.rand(*shape).astype(dtype) + 1j*np.random.rand(*shape).astype(dtype)

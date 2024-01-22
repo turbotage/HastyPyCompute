@@ -61,7 +61,7 @@ async def gradient_step_x(smaps, image, coords, kdata, weights, device, alpha, n
         
         cp.fuse(kernel_name='sum_smaps_func')
         def sum_smaps_func(imgmem, s, alpha):
-            return alpha * cp.sum(imgmem * cp.conj(s))
+            return alpha * cp.sum(imgmem * cp.conj(s), axis=0)
 
         loop = asyncio.get_event_loop()
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(streams))
@@ -76,6 +76,9 @@ async def gradient_step_x(smaps, image, coords, kdata, weights, device, alpha, n
                 weights_frame = cp.array(weights[slice])
                 coord_frame = cp.array(coords[slice])
                 
+                forward_plans[modi].setpts(x=coord_frame[0,...], y=coord_frame[1,...], z=coord_frame[2,...])
+                backward_plans[modi].setpts(x=coord_frame[0,...], y=coord_frame[1,...], z=coord_frame[2,...])
+
                 runs = math.ceil(num_smaps / ntransf)
                 for run in range(runs):
                     start = run * ntransf
@@ -87,9 +90,6 @@ async def gradient_step_x(smaps, image, coords, kdata, weights, device, alpha, n
                     locals = smaps_gpu[start:start+ntransf,...]
 
                     imagemem = locals * image_frame
-
-                    forward_plans[modi].setpts(x=coord_frame[0,...], y=coord_frame[1,...], z=coord_frame[2,...])
-                    backward_plans[modi].setpts(x=coord_frame[0,...], y=coord_frame[1,...], z=coord_frame[2,...])
 
                     forward_plans[modi].execute(imagemem, out=kdatamem)
                     if kdata is not None:
@@ -154,13 +154,13 @@ async def main():
     weights = await weights
 
     start = time.time()
-    await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
-                        [cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=True)])
+    #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
+    #                    [cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=True)])
     
     #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
     #					[cp.cuda.Stream(non_blocking=True)])
     
-    #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8)
+    await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8)
     
     end = time.time()
     print(f"Grad Time={end - start} s")

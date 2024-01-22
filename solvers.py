@@ -26,7 +26,7 @@ async def fista(xp, x, alpha, gradstep, prox, maxiter):
         resids.append(xp.linalg.norm(z))
         xp.add(x, ((t_old - 1.0) / t) *z, out=z)
 
-    for i in range(maxiter):
+    for _ in range(maxiter):
         await update()
 
     return resids

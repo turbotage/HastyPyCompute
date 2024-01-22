@@ -50,6 +50,10 @@ async def main():
 		for kd in dataset['kdatas']:
 			kd[:] /= maxval
 
+		maxval = max(np.max(np.abs(wd)) for wd in dataset['weights'])
+		for wd in dataset['weights']:
+			wd[:] /= maxval
+
 		start = time.time()
 		load_data.save_processed_dataset(dataset, '/home/turbotage/Documents/4DRecon/dataset.h5')
 		end = time.time()
@@ -61,10 +65,10 @@ async def main():
 		print(f"Load Dataset Time={end - start} s")
 
 
-
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
+	
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 11, imsize, "full")
 
 	await coil_est.isense(image, smaps, 
@@ -72,7 +76,6 @@ async def main():
 		cp.array(dataset['kdatas'][0]), 
 		cp.array(dataset['weights'][0]),
 		devicectx)
-
 
 
 	if False:
