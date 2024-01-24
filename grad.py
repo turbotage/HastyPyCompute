@@ -105,7 +105,7 @@ class DeviceCtx:
 
 
 # Inputs shall be on CPU or GPU, computes x = x - alpha * S^HN^H(W(NSx-b)) or returns S^HN^HWN^HSx
-async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx):
+async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm = False):
 	with devicectx.device:
 		ncoils = smaps.shape[0]
 		numframes = images.shape[0]
@@ -126,14 +126,19 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 			return w*(kdmem - kd)
 		
 		cp.fuse(kernel_name='sum_smaps_func')
-		def sum_smaps_func(imgmem, s, alpha):
-			return alpha * cp.sum(imgmem * cp.conj(s), axis=0)
+		def sum_smaps_func(imgmem, sin, ain):
+			return ain * cp.sum(imgmem * cp.conj(sin), axis=0)
+
+		normlist = []
 
 		runs = int(ncoils / ntransf)
 		for frame in range(numframes):
 			image_frame = cp.array(images[frame,...], copy=False)
 			weights_frame = cp.array(weights[frame], copy=False)
 			coord_frame = cp.array(coords[frame], copy=False)
+
+			if normlist is not None:
+				normlist.append(0.0)
 
 			devicectx.setpts(coord_frame)
 			for run in range(runs):
@@ -152,6 +157,8 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 
 				if kdatas is not None:
 					kdatamem = weights_and_kdata_func(kdatamem, kdata_frame, weights_frame)
+					if normlist is not None:
+						normlist[frame] += cp.linalg.norm(kdatamem)
 				else:
 					kdatamem *= weights_frame
 
@@ -170,6 +177,8 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 
 		if alpha is None:
 			return images_out
+		else:
+			return normlist
 
 async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list[DeviceCtx]):
 	numframes = images.shape[0]
@@ -217,7 +226,7 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 
 
 # Inputs shall be on GPU
-async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx):
+async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm=False):
 	with devicectx.device:
 		ncoils = smaps.shape[0]
 		ntransf = devicectx.ntransf
@@ -230,6 +239,8 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 
 		if alpha is None:
 			smaps_out = cp.empty_like(smaps)
+
+		norm = 0
 
 		runs = int(ncoils / ntransf)
 		for run in range(runs):
@@ -246,6 +257,8 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 
 			if kdatas is not None:
 				kdmem = weights_and_kdata_func(kdmem, kd, weights)
+				if calcnorm:
+					norm += cp.linalg.norm(kdmem)
 			else:
 				kdmem *= weights
 
@@ -258,3 +271,5 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 
 		if alpha is None:
 			return smaps_out
+		
+		return norm

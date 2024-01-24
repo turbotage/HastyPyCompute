@@ -2,6 +2,7 @@ import cupy as cp
 import cufinufft
 from scipy.signal import tukey
 import math
+import util
 
 import grad
 import solvers
@@ -50,42 +51,46 @@ async def low_res_sensemap(coord, kdata, weights, im_size, tukey_param=(0.95, 0.
 		del coil_images_filtered
 		image = cp.sum(cp.conj(smaps) * coil_images, axis=0) / cp.sum(cp.conj(smaps)*smaps, axis=0)
 
-		return smaps, image[None,...]
+		return smaps.get(), image[None,...].get()
 	else:
 		raise RuntimeError('Not Implemented Dimension')
 
-async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, iter=[10,[4,4]], lamda=[0.1, 0.1]):
+async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, iter=[10,[5,5]], lamda=[0.1, 0.1]):
 	dev = cp.cuda.Device(0)
 
-	async def snormal(s):
-		return await grad.device_gradient_step_s(smp, img, coord, None, weights, None, devicectx)
+	async def snormal(smpnew):
+		return await grad.device_gradient_step_s(smpnew, img, coord, None, weights, None, devicectx)
 
-	async def inormal(i):
-		return await grad.device_gradient_step_x(smp, img, [coord], None, [weights], None, devicectx)
+	async def inormal(imgnew):
+		return await grad.device_gradient_step_x(smp, imgnew, [coord], None, [weights], None, devicectx)
 
 	async def gradx(ximg, a):
-		await grad.device_gradient_step_x(smp, ximg, [coord], [kdata], [weights], a, devicectx)
+		norm = await grad.device_gradient_step_x(smp, ximg, [coord], [kdata], [weights], a, devicectx, calcnorm=True)
+		print(f"Data Error: {norm[0]}")
 	
 	async def grads(smp, a):
-		await grad.device_gradient_step_s(smp, img, coord, kdata, weights, a, devicectx)
+		norm = await grad.device_gradient_step_s(smp, img, coord, kdata, weights, a, devicectx, calcnorm=True)
+		print(f"Data Error: {norm}")
 
 	proxx = prox.dctprox(lamda[0])
-	proxs = prox.dctprox(lamda[1])
+	proxs = prox.fftprox(lamda[1])
 
-	alpha_i = 0.5 / await solvers.max_eig(cp, inormal, cp.ones_like(img), 8)
+	#alpha_i = 0.5 / await solvers.max_eig(cp, inormal, cp.ones_like(img), 8)
+	alpha_i = 0.25 / await solvers.max_eig(cp, inormal, util.complex_rand(img.shape, xp=cp), 8)
 
 	img.fill(0.0)
-	await solvers.fista(cp, img, 0.25, gradx, proxx, 10)
+	await solvers.fista(cp, img, alpha_i, gradx, proxx, 15)
 
-	alpha_s = 0.5 / await solvers.max_eig(cp, snormal, smp, 8)
+	alpha_s = 0.125 / await solvers.max_eig(cp, snormal, smp, 8)
 
 	async def update():
-		
-		await solvers.fista(cp, s, alpha_s, grads, proxs, iter[1][0])
-		await solvers.fista(cp, i, alpha_i, gradx, proxx, iter[1][1])
+		print('S update:')		
+		await solvers.fista(cp, smp, alpha_s, grads, proxs, iter[1][0])
+		print('I update:')
+		await solvers.fista(cp, img, alpha_i, gradx, proxx, iter[1][1])
 
 	for it in range(iter[0]):
-		update()
+		await update()
 
 	return smp, img
 		

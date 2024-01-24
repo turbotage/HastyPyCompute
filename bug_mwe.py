@@ -10,6 +10,7 @@ import concurrent
 from functools import partial
 import time
 
+
 # Inputs shall be on CPU
 async def gradient_step_x(smaps, image, coords, kdata, weights, device, alpha, ntransf = None, streams=[],full=False):
     with device:
@@ -114,6 +115,8 @@ async def gradient_step_x(smaps, image, coords, kdata, weights, device, alpha, n
             for fut in futures:
                 await fut
 
+        del backward_plans
+        del forward_plans
 
 
 
@@ -154,13 +157,13 @@ async def main():
     weights = await weights
 
     start = time.time()
-    #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
-    #                    [cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=True)])
+    await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
+                        [cp.cuda.Stream(non_blocking=True), cp.cuda.Stream(non_blocking=True)])
     
     #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8, 
     #					[cp.cuda.Stream(non_blocking=True)])
     
-    await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8)
+    #await gradient_step_x(smaps, image, coord, kdata, weights, cp.cuda.Device(0), 0.1, 8)
     
     end = time.time()
     print(f"Grad Time={end - start} s")

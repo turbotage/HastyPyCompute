@@ -71,11 +71,13 @@ async def main():
 	
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 11, imsize, "full")
 
-	await coil_est.isense(image, smaps, 
+	smaps, image = await coil_est.isense(image, smaps, 
 		cp.array(dataset['coords'][0]), 
 		cp.array(dataset['kdatas'][0]), 
 		cp.array(dataset['weights'][0]),
-		devicectx)
+		devicectx, 
+		iter=[7,[5,5]],
+		lamda=[0.5, 0.00001])
 
 
 	if False:

@@ -17,8 +17,8 @@ def get_array_backend(arr):
     else:
         raise ValueError(f"Unsupported array type: {type(arr)}")
 
-def complex_rand(shape, dtype=np.float32):
-    return np.random.rand(*shape).astype(dtype) + 1j*np.random.rand(*shape).astype(dtype)
+def complex_rand(shape, dtype=np.float32, xp=np):
+    return xp.random.rand(*shape).astype(dtype) + 1j*xp.random.rand(*shape).astype(dtype)
 
 def rand_vector(shape, num, bounds=[0.0, 1.0], dtype=np.float32):
     vec = []
