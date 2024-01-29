@@ -19,7 +19,11 @@ def dctprox(base_alpha):
             gpuimg = cpxsp.fft.dctn(cp.array(image[i,...]))
             gpuimg = softmax(gpuimg, lamda)
             gpuimg = cpxsp.fft.idctn(gpuimg)
-            cp.copyto(image[i,...], gpuimg)
+            if hasattr(image, 'device'):
+                if image.device == gpuimg.device:
+                    cp.copyto(image[i,...], gpuimg)
+            else:
+                image[i,...] = gpuimg.get()
 
     return dctprox_ret
 
@@ -36,7 +40,11 @@ def fftprox(base_alpha):
             gpuimg = cp.fft.fftn(cp.array(image[i,...]), norm="ortho")
             gpuimg = softmax(gpuimg, lamda)
             gpuimg = cp.fft.ifftn(gpuimg, norm="ortho")
-            cp.copyto(image[i,...], gpuimg)
+            if hasattr(image, 'device'):
+                if image.device == gpuimg.device:
+                    cp.copyto(image[i,...], gpuimg)
+            else:
+                image[i,...] = gpuimg.get()
 
     return fftprox_ret
 

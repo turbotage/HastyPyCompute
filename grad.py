@@ -165,24 +165,29 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 				devicectx.backward_execute(kdatamem, out=imagemem)
 				
 				if alpha is None:
-					if images.device == devicectx.device:
-						images_out[frame,...] += sum_smaps_func(imagemem, locals, 1.0)
+					if hasattr(images, 'device'):
+						if images.device == devicectx.device:
+							images_out[frame,...] += sum_smaps_func(imagemem, locals, 1.0)
+						else:
+							raise RuntimeError('images must reside on same device as devicectx or in cpu')
 					else:
 						images_out[frame,...] += sum_smaps_func(imagemem, locals, 1.0).get()
 				else:
-					if images.device == devicectx.device:
-						images[frame,...] -= sum_smaps_func(imagemem, locals, alpha)
+					if hasattr(images, 'device'):
+						if images.device == devicectx.device:
+							images[frame,...] -= sum_smaps_func(imagemem, locals, alpha)
+						else:
+							raise RuntimeError('images must reside on same device as devicectx or in cpu')
 					else:
 						images[frame,...] -= sum_smaps_func(imagemem, locals, alpha).get()
 
 		if alpha is None:
 			return images_out
-		else:
+		elif calcnorm:
 			return normlist
 
-async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list[DeviceCtx]):
+async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list[DeviceCtx], calcnorm = False):
 	numframes = images.shape[0]
-	runners = numframes 
 
 	# This is how many equally distributed frames per device we have
 	frames_per_device = [numframes // len(devicectxs) for i in range(len(devicectxs))]
@@ -201,26 +206,36 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 
 	futures = []
 	start = 0
-	for fpd in frames_per_device:
+	for devindex, fpd in enumerate(frames_per_device):
 		end = start + fpd
 		futures.append(loop.run_in_executor(executor, device_gradient_step_x,
-			smaps[start:end,...], 
-			images[start:end,...], 
-			coords[start:end,...], 
-			kdatas[start:end,...], 
-			weights[start:end,...], 
-			alpha, devicectxs[devindex]))
+			smaps, 
+			images[start:end], 
+			coords[start:end], 
+			None if kdatas is None else kdatas[start:end], 
+			weights[start:end], 
+			alpha, devicectxs[devindex], calcnorm))
 		start = end
 	
+
+	normlist = []
 
 	start = 0
 	for i in range(len(futures)):
 		end = start + frames_per_device[i]
 
 		if alpha is None:
-			images_out[start:end,...] = await futures[i]
+			images_out[start:end] = await (await futures[i])
+		elif calcnorm:
+			normlist.append(await (await futures[i]))
 		else:
 			await futures
+
+	if alpha is None:
+		return images_out
+	elif calcnorm:
+		return normlist
+	
 
 
 
@@ -231,17 +246,20 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 		ncoils = smaps.shape[0]
 		ntransf = devicectx.ntransf
 
-		devicectx.setpts(coords)
 
 		cp.fuse(kernel_name='weights_and_kdata_func')
 		def weights_and_kdata_func(kdmem, kd, w):
 			return w*(kdmem - kd)
 
 		if alpha is None:
-			smaps_out = cp.empty_like(smaps)
+			smaps_out = util.get_array_backend(smaps).empty_like(smaps)
+
+		img = cp.array(images, copy=False)
+		smp = cp.array(smaps, copy=False)
 
 		norm = 0
 
+		devicectx.setpts(cp.array(coords, copy=False))
 		runs = int(ncoils / ntransf)
 		for run in range(runs):
 			start = run * ntransf
@@ -251,7 +269,7 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 			
 			kdmem = cp.empty((ntransf,coords.shape[1]), dtype=images.dtype)
 
-			smem = images * smaps[start:start+ntransf,...]
+			smem = img * smp[start:start+ntransf,...]
 
 			devicectx.forward_execute(smem, kdmem)
 
@@ -265,11 +283,27 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 			devicectx.backward_execute(kdmem, out=smem)
 			
 			if alpha is None:
-				smaps_out[start:start+ntransf,...] = cp.conj(images) * smem
+				if hasattr(smaps, 'device'):
+					if smaps.device == devicectx.device:
+						smaps_out[start:start+ntransf,...] = cp.conj(img) * smem
+					else:
+						raise RuntimeError('smaps must reside on same device as devicectx or in cpu')
+				else:
+					smaps_out[start:start+ntransf,...] = (cp.conj(img) * smem).get()
 			else:
-				smaps[start:start+ntransf,...] -= alpha * cp.conj(images) * smem
+				if hasattr(smaps, 'device'):
+					if smaps.device == devicectx.device:
+						smaps[start:start+ntransf,...] -= alpha * cp.conj(img) * smem
+					else:
+						raise RuntimeError('smaps must reside on same device as devicectx or in cpu')
+				else:
+					smaps[start:start+ntransf,...] -= (alpha * cp.conj(img) * smem).get()
+                    
 
 		if alpha is None:
 			return smaps_out
+		elif calcnorm:
+			return norm
 		
-		return norm
+async def gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm=False):
+	return await device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx, calcnorm)

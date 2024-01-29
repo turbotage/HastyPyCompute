@@ -17,6 +17,7 @@ import cupy as cp
 import solvers
 import grad
 
+import prox
 
 
 
@@ -24,7 +25,7 @@ async def main():
 
 	imsize = (160,160,160)
 
-	load_from_zero = False
+	load_from_zero = True
 	if load_from_zero:
 		start = time.time()
 		dataset = await load_data.load_flow_data('/home/turbotage/Documents/4DRecon/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
@@ -68,7 +69,16 @@ async def main():
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
-	
+	smpsclone = smaps.copy()
+
+	proxs = prox.spatial_svtprox(1.0, np.array([32,32,32]), np.array([32,32,32]), 4)
+
+	start = time.time()
+	await proxs(smpsclone, 0.1, smaps.copy())
+	end = time.time()
+	print(f"Time: {end - start} s")
+
+
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 11, imsize, "full")
 
 	smaps, image = await coil_est.isense(image, smaps, 

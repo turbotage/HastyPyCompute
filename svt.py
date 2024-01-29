@@ -10,230 +10,238 @@ import concurrent
 @nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
 def block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames):
 
-    bx = br[0]
-    by = br[1]
-    bz = br[2]
+	bx = br[0]
+	by = br[1]
+	bz = br[2]
 
-    Sx = Sr[0]
-    Sy = Sr[1]
-    Sz = Sr[2]
+	Sx = Sr[0]
+	Sy = Sr[1]
+	Sz = Sr[2]
 
-    shiftz = shifts[0, iter]
-    shifty = shifts[1, iter]
-    shiftx = shifts[2, iter]
+	shiftz = shifts[0, iter]
+	shifty = shifts[1, iter]
+	shiftx = shifts[2, iter]
 
-    large_block = np.empty((bx * by * bz, bshape[0]*bshape[1]*bshape[2]*num_encodes, num_frames), dtype=np.complex64)
+	large_block = np.empty((bx * by * bz, bshape[0]*bshape[1]*bshape[2]*num_encodes, num_frames), dtype=np.complex64)
 
-    block_counter = 0
-    for nz in nb.prange(bz):
-        sz = nz * bstrides[0] + shiftz
-        ez = sz + bshape[0]
+	block_counter = 0
+	for nz in nb.prange(bz):
+		sz = nz * bstrides[0] + shiftz
+		ez = sz + bshape[0]
 
-        for ny in range(by):
-            sy = ny * bstrides[1] + shifty
-            ey = sy + bshape[1]
+		for ny in range(by):
+			sy = ny * bstrides[1] + shifty
+			ey = sy + bshape[1]
 
-            for nx in range(bx):
-                sx = nx * bstrides[2] + shiftx
-                ex = sx + bshape[2]
+			for nx in range(bx):
+				sx = nx * bstrides[2] + shiftx
+				ex = sx + bshape[2]
 
-                for tframe in range(num_frames):
-                    count = 0
-                    for encode in range(num_encodes):
-                        store_pos = int(tframe * num_encodes + encode)
-                        for x in range(sx, ex):
-                            for y in range(sy, ey):
-                                for z in range(sz, ez):
-                                    large_block[block_counter, count, tframe] = input[store_pos, x % Sx, y % Sy, z % Sz]
-                                    count += 1
+				for tframe in range(num_frames):
+					count = 0
+					for encode in range(num_encodes):
+						store_pos = int(tframe * num_encodes + encode)
+						for x in range(sx, ex):
+							for y in range(sy, ey):
+								for z in range(sz, ez):
+									large_block[block_counter, count, tframe] = input[store_pos, x % Sx, y % Sy, z % Sz]
+									count += 1
 
-                block_counter += 1
+				block_counter += 1
 
-    return large_block
+	return large_block
 
 #def block_fetcher_3d(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames):
 #    return block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames)
 
 @nb.jit(nopython=True, cache=True, parallel=True)
 def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
-    bx = br[0]
-    by = br[1]
-    bz = br[2]
+	bx = br[0]
+	by = br[1]
+	bz = br[2]
 
-    Sx = Sr[0]
-    Sy = Sr[1]
-    Sz = Sr[2]
+	Sx = Sr[0]
+	Sy = Sr[1]
+	Sz = Sr[2]
 
-    shiftz = shifts[0, iter]
-    shifty = shifts[1, iter]
-    shiftx = shifts[2, iter]
+	shiftz = shifts[0, iter]
+	shifty = shifts[1, iter]
+	shiftx = shifts[2, iter]
 
-    block_counter = 0
-    for nz in nb.prange(bz):
-        sz = nz * bstrides[0] + shiftz
-        ez = sz + bshape[0]
+	block_counter = 0
+	for nz in nb.prange(bz):
+		sz = nz * bstrides[0] + shiftz
+		ez = sz + bshape[0]
 
-        for ny in range(by):
-            sy = ny * bstrides[1] + shifty
-            ey = sy + bshape[1]
+		for ny in range(by):
+			sy = ny * bstrides[1] + shifty
+			ey = sy + bshape[1]
 
-            for nx in range(bx):
-                sx = nx * bstrides[2] + shiftx
-                ex = sx + bshape[2]
+			for nx in range(bx):
+				sx = nx * bstrides[2] + shiftx
+				ex = sx + bshape[2]
 
-                # Put block back
-                for tframe in range(num_frames):
-                    count = 0
-                    for encode in range(num_encodes):
-                        store_pos = int(tframe * num_encodes + encode)
-                        for x in range(sx, ex):
-                            for y in range(sy, ey):
-                                for z in range(sz, ez):
-                                    output[store_pos, x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, tframe]
-                                    count += 1
+				# Put block back
+				for tframe in range(num_frames):
+					count = 0
+					for encode in range(num_encodes):
+						store_pos = int(tframe * num_encodes + encode)
+						for x in range(sx, ex):
+							for y in range(sy, ey):
+								for z in range(sz, ez):
+									output[store_pos, x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, tframe]
+									count += 1
 
-                block_counter += 1
+				block_counter += 1
 
 
 #def block_pusher_3d(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
 #    return block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale)
 
-@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
+#@nb.jit(nopython=True, cache=True, parallel=True)'
+@nb.jit(nopython=True, cache=True, nogil=True)
 def spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, dir):
-    bx = br[0]
-    by = br[1]
-    bz = br[2]
+	bx = br[0]
+	by = br[1]
+	bz = br[2]
 
-    Sx = Sr[0]
-    Sy = Sr[1]
-    Sz = Sr[2]
+	Sx = Sr[0]
+	Sy = Sr[1]
+	Sz = Sr[2]
 
-    shiftz = shifts[0, iter]
-    shifty = shifts[1, iter]
-    shiftx = shifts[2, iter]
+	shiftx = shifts[0, iter]
+	shifty = shifts[1, iter]
+	shiftz = shifts[2, iter]
 
-    if dir == 'x':
-        large_block = np.empty((bx * by * bz, bshape[1]*bshape[2], bshape[0]), dtype=np.complex64)
-    elif dir == 'y':
-        large_block = np.empty((bx * by * bz, bshape[0]*bshape[2], bshape[1]), dtype=np.complex64)
-    elif dir == 'z':
-        large_block = np.empty((bx * by * bz, bshape[0]*bshape[1], bshape[2]), dtype=np.complex64)
+	if dir == 'x':
+		large_block = np.empty((bx * by * bz, bshape[1]*bshape[2], bshape[0]), dtype=np.complex64)
+	elif dir == 'y':
+		large_block = np.empty((bx * by * bz, bshape[0]*bshape[2], bshape[1]), dtype=np.complex64)
+	elif dir == 'z':
+		large_block = np.empty((bx * by * bz, bshape[0]*bshape[1], bshape[2]), dtype=np.complex64)
 
-    block_counter = 0
-    for nz in nb.prange(bz):
-        sz = nz * bstrides[0] + shiftz
-        ez = sz + bshape[0]
+	block_counter = 0
+	for nz in range(bz): #nb.prange(bz):
+		sz = nz * bstrides[2] + shiftz
+		ez = sz + bshape[2]
 
-        for ny in range(by):
-            sy = ny * bstrides[1] + shifty
-            ey = sy + bshape[1]
+		for ny in range(by):
+			sy = ny * bstrides[1] + shifty
+			ey = sy + bshape[1]
 
-            for nx in range(bx):
-                sx = nx * bstrides[2] + shiftx
-                ex = sx + bshape[2]
+			for nx in range(bx):
+				sx = nx * bstrides[0] + shiftx
+				ex = sx + bshape[0]
 
-                # Fetches x block
-                if dir == 'x':
-                    for x in range(sx, ex):
-                        count = 0
-                        for y in range(sy, ey):
-                            for z in range(sz, ez):
-                                large_block[block_counter, count, x] = input[x % Sx, y % Sy, z % Sz]
-                                count += 1
-                elif dir == 'y':
-                    for y in range(sy, ey):
-                        count = 0
-                        for x in range(sx, ex):
-                            for z in range(sz, ez):
-                                large_block[block_counter, count, y] = input[x % Sx, y % Sy, z % Sz]
-                                count += 1
-                elif dir == 'z':
-                    for z in range(sz, ez):
-                        count = 0
-                        for x in range(sx, ex):
-                            for y in range(sy, ey):
-                                large_block[block_counter, count, z] = input[x % Sx, y % Sy, z % Sz]
-                                count += 1
+				dircount = 0
+				if dir == 'x':
+					for x in range(sx, ex):
+						count = 0
+						for y in range(sy, ey):
+							for z in range(sz, ez):
+								large_block[block_counter, count, dircount] = input[x % Sx, y % Sy, z % Sz]
+								count += 1
+						dircount += 1
+				elif dir == 'y':
+					for y in range(sy, ey):
+						count = 0
+						for x in range(sx, ex):
+							for z in range(sz, ez):
+								large_block[block_counter, count, dircount] = input[x % Sx, y % Sy, z % Sz]
+								count += 1
+						dircount += 1
+				elif dir == 'z':
+					for z in range(sz, ez):
+						count = 0
+						for x in range(sx, ex):
+							for y in range(sy, ey):
+								large_block[block_counter, count, dircount] = input[x % Sx, y % Sy, z % Sz]
+								count += 1
+						dircount += 1
 
-                block_counter += 1
+				block_counter += 1
 
-    return large_block
+	return large_block
 
-@nb.jit(nopython=True, cache=True, parallel=True)
+@nb.jit(nopython=True, cache=True, nogil=True)
 def spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, scale, dir):
-    bx = br[0]
-    by = br[1]
-    bz = br[2]
+	bx = br[0]
+	by = br[1]
+	bz = br[2]
 
-    Sx = Sr[0]
-    Sy = Sr[1]
-    Sz = Sr[2]
+	Sx = Sr[0]
+	Sy = Sr[1]
+	Sz = Sr[2]
 
-    shiftz = shifts[0, iter]
-    shifty = shifts[1, iter]
-    shiftx = shifts[2, iter]
+	shiftx = shifts[0, iter]
+	shifty = shifts[1, iter]
+	shiftz = shifts[2, iter]
 
-    block_counter = 0
-    for nz in nb.prange(bz):
-        sz = nz * bstrides[0] + shiftz
-        ez = sz + bshape[0]
+	block_counter = 0
+	for nz in range(bz):
+		sz = nz * bstrides[2] + shiftz
+		ez = sz + bshape[2]
 
-        for ny in range(by):
-            sy = ny * bstrides[1] + shifty
-            ey = sy + bshape[1]
+		for ny in range(by):
+			sy = ny * bstrides[1] + shifty
+			ey = sy + bshape[1]
 
-            for nx in range(bx):
-                sx = nx * bstrides[2] + shiftx
-                ex = sx + bshape[2]
+			for nx in range(bx):
+				sx = nx * bstrides[0] + shiftx
+				ex = sx + bshape[0]
 
-                # Pushes x block
-                if dir == 'x':
-                    for x in range(sx, ex):
-                        count = 0
-                        for y in range(sy, ey):
-                            for z in range(sz, ez):
-                                output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, x]
-                                count += 1
-                elif dir == 'y':
-                    for y in range(sy, ey):
-                        count = 0
-                        for x in range(sx, ex):
-                            for z in range(sz, ez):
-                                output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, y]
-                                count += 1
-                elif dir == 'z':
-                    for z in range(sz, ez):
-                        count = 0
-                        for x in range(sx, ex):
-                            for y in range(sy, ey):
-                                output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, z]
-                                count += 1
+				dircount = 0
+				# Pushes x block
+				if dir == 'x':
+					for x in range(sx, ex):
+						count = 0
+						for y in range(sy, ey):
+							for z in range(sz, ez):
+								output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, dircount]
+								count += 1
+						dircount += 1
+				elif dir == 'y':
+					for y in range(sy, ey):
+						count = 0
+						for x in range(sx, ex):
+							for z in range(sz, ez):
+								output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, dircount]
+								count += 1
+						dircount += 1
+				elif dir == 'z':
+					for z in range(sz, ez):
+						count = 0
+						for x in range(sx, ex):
+							for y in range(sy, ey):
+								output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, dircount]
+								count += 1
+						dircount += 1
 
-                block_counter += 1
+				block_counter += 1
 
 
 
 @cp.fuse(kernel_name='thresh_blocks_cupy')
 def softthresh_func(s, lamda):
-    return cp.maximum(0, (cp.abs(s) - lamda))
+	return cp.maximum(0, (cp.abs(s) - lamda))
 
 def thresh_blocks(lblock, lamda, max_run_blocks):
-    stream = cp.cuda.Stream(non_blocking=True)
+	stream = cp.cuda.Stream(non_blocking=True)
 
-    runs = lblock.shape[0] // max_run_blocks
-    with stream:
-        for i in range(runs):
-            offset = i*max_run_blocks
-            cu_lblock = cp.array(lblock[offset:(offset + max_run_blocks),...])
-            u, s, v = cp.linalg.svd(cu_lblock, full_matrices=False)
-            s = softthresh_func(s, lamda)
-            cu_lblock = u @ (s[...,None] * v)
-            lblock[offset:(offset + max_run_blocks),...] = cu_lblock.get()
+	runs = lblock.shape[0] // max_run_blocks
+	with stream:
+		for i in range(runs):
+			offset = i*max_run_blocks
+			cu_lblock = cp.array(lblock[offset:(offset + max_run_blocks),...])
+			u, s, v = cp.linalg.svd(cu_lblock, full_matrices=False)
+			s = softthresh_func(s, lamda)
+			cu_lblock = u @ (s[...,None] * v)
+			lblock[offset:(offset + max_run_blocks),...] = cu_lblock.get()
 
-    stream.synchronize()
+	stream.synchronize()
 
-    return lblock
-            
+	return lblock
+			
 
 
 
@@ -241,179 +249,182 @@ def thresh_blocks(lblock, lamda, max_run_blocks):
 
 
 async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_encodes):
-    imsize = input.shape[1:]
-    br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
-    Sr = np.array([int(imsize[1]), int(imsize[2]), int(imsize[3])])
+	imsize = input.shape[1:]
+	br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
+	Sr = np.array([int(imsize[1]), int(imsize[2]), int(imsize[3])])
 
-    scale = float(1.0 / block_iter)
+	scale = float(1.0 / block_iter)
 
-    num_frames = int(input.shape[0]/num_encodes)
+	num_frames = int(input.shape[0]/num_encodes)
 
-    shifts = np.zeros((3, block_iter), np.int32)
-    for d in range(3):
-        for biter in range(block_iter):
-            shifts[d,biter] = np.random.randint(blk_shape[d])
+	shifts = np.zeros((3, block_iter), np.int32)
+	for d in range(3):
+		for biter in range(block_iter):
+			shifts[d,biter] = np.random.randint(blk_shape[d])
 
-    lock = asyncio.Lock()
-    loop = asyncio.get_event_loop()
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
+	lock = asyncio.Lock()
+	loop = asyncio.get_event_loop()
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
 
-    def fetch_and_thresh(iter):
-        start = time.time()
-        large_block =  block_fetcher_3d_numba(input, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames)
-        end = time.time()
-        print(f"Fetcher Time = {end - start}")
+	def fetch_and_thresh(iter):
+		start = time.time()
+		large_block =  block_fetcher_3d_numba(input, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames)
+		end = time.time()
+		print(f"Fetcher Time = {end - start}")
 
-        start = time.time()
-        large_block = thresh_blocks(large_block, lamda, 50)
-        end = time.time()
-        print(f"SoftThresh Time = {end - start}")
+		start = time.time()
+		large_block = thresh_blocks(large_block, lamda, 50)
+		end = time.time()
+		print(f"SoftThresh Time = {end - start}")
 
-        return large_block
+		return large_block
 
-    futures = []
-    for iter in range(block_iter):
-        futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter))
+	futures = []
+	for iter in range(block_iter):
+		futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter))
 
-    for iter in range(block_iter):
-        
-        large_block = await futures[iter]
+	for iter in range(block_iter):
+		
+		large_block = await futures[iter]
 
-        start = time.time()
-        block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames, scale)
-        end = time.time()
-        print(f"Pusher Time = {end - start}")
+		start = time.time()
+		block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames, scale)
+		end = time.time()
+		print(f"Pusher Time = {end - start}")
 
 
-    return output
+	return output
 
 
 
 
 async def my_spatial_svt3(output, input, lamda, blk_shape, blk_strides, block_iter):
-    imsize = input.shape
-    br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
-    Sr = np.array([int(imsize[1]), int(imsize[2]), int(imsize[3])])
+	imsize = input.shape[1:]
+	br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
+	Sr = np.array([int(imsize[0]), int(imsize[1]), int(imsize[2])])
 
-    scale = float(1.0 / (3 * block_iter))
+	scale = float(1.0 / (3 * block_iter))
 
-    shifts = np.zeros((3, block_iter), np.int32)
-    for d in range(3):
-        for biter in range(block_iter):
-            shifts[d,biter] = np.random.randint(blk_shape[d])
+	shifts = np.zeros((3, block_iter), np.int32)
+	for d in range(3):
+		for biter in range(block_iter):
+			shifts[d,biter] = np.random.randint(blk_shape[d])
 
-    lock = asyncio.Lock()
-    loop = asyncio.get_event_loop()
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
+	loop = asyncio.get_event_loop()
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
 
-    def fetch_and_thresh(iter, dir):
-        start = time.time()
-        large_block =  spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, blk_shape, blk_strides, dir)
-        end = time.time()
-        print(f"Fetcher Time = {end - start}")
+	def fetch_and_thresh(frame, iter, dir):
+		start = time.time()
+		large_block =  spatial_block_fetcher_3d_numba(input[frame,...], iter, shifts, br, Sr, blk_shape, blk_strides, dir)
+		end = time.time()
+		#print(f"Fetcher Time = {end - start}")
 
-        start = time.time()
-        large_block = thresh_blocks(large_block, lamda, 100)
-        end = time.time()
-        print(f"SoftThresh Time = {end - start}")
+		start = time.time()
+		large_block = thresh_blocks(large_block, lamda, 100)
+		end = time.time()
+		#print(f"SoftThresh Time = {end - start}")
 
-        return large_block
+		start = time.time()
+		spatial_block_pusher_3d_numba(output[frame,...], large_block, iter, shifts, br, Sr, blk_shape, blk_strides, scale, dir)
+		end = time.time()
+		#print(f"Pusher Time = {end - start}")
+		#print(f"Frame = {frame}, iter = {iter}, dir = {dir}")
 
-    futures = []
-    for iter in range(block_iter):
-        futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter, 'x'))
-        futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter, 'y'))
-        futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter, 'z'))
+	async def run_frames(dir, iter):
+		futures = []
+		for frame in range(input.shape[0]):
+			futures.append(loop.run_in_executor(executor, fetch_and_thresh, frame, iter, dir))
+			#await futures[-1]
+		for fut in futures:
+			await fut
 
-    for iter in range(block_iter):
-        
-        large_block = await futures[3*iter]
+	for iter in range(block_iter):
 
-        spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, scale, 'x')
+		# X-dir
+		await run_frames('x', iter)
 
-        large_block = await futures[3*iter+1]
+		# Y-dir
+		await run_frames('y', iter)
 
-        spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, scale, 'y')
-
-        large_block = await futures[3*iter+2]
-
-        spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, scale, 'z')
-
-    return output
+        # Z-dir
+		await run_frames('z', iter)
 
 
+	return output
 
-    by = input.shape[1] // blk_strides[0]
-    bx = input.shape[2] // blk_strides[1]
 
-    Sy = int(input.shape[1])
-    Sx = int(input.shape[2])
 
-    scale = float(1.0 / block_iter)
+	by = input.shape[1] // blk_strides[0]
+	bx = input.shape[2] // blk_strides[1]
 
-    num_frames = int(input.shape[0]/num_encodes)
-    bmat_shape = (num_encodes*blk_shape[0] * blk_shape[1], num_frames)
+	Sy = int(input.shape[1])
+	Sx = int(input.shape[2])
 
-    shifts = np.zeros((2, block_iter), np.int32)
-    for d in range(2):
-        for biter in range(block_iter):
-            shifts[d,biter] = np.random.randint(blk_shape[d])
+	scale = float(1.0 / block_iter)
 
-    for iter in range(block_iter):
-        #print('block iter = ',iter)
-        shiftx = shifts[0, iter]
-        shifty = shifts[1, iter]
+	num_frames = int(input.shape[0]/num_encodes)
+	bmat_shape = (num_encodes*blk_shape[0] * blk_shape[1], num_frames)
 
-        for ny in nb.prange(by):
-            sy = ny * blk_strides[0] + shifty
-            ey = sy + blk_shape[0]
+	shifts = np.zeros((2, block_iter), np.int32)
+	for d in range(2):
+		for biter in range(block_iter):
+			shifts[d,biter] = np.random.randint(blk_shape[d])
 
-            for nx in range(bx):
+	for iter in range(block_iter):
+		#print('block iter = ',iter)
+		shiftx = shifts[0, iter]
+		shifty = shifts[1, iter]
 
-                sx = nx * blk_strides[1] + shiftx
-                ex = sx + blk_shape[1]
+		for ny in nb.prange(by):
+			sy = ny * blk_strides[0] + shifty
+			ey = sy + blk_shape[0]
 
-                block = np.zeros(bmat_shape, input.dtype)
+			for nx in range(bx):
 
-                # Grab a block
-                for tframe in range(num_frames):
-                    count = 0
-                    for encode in range(num_encodes):
-                        store_pos = int(tframe * num_encodes + encode)
-                        for j in range(sy, ey):
-                            for i in range(sx, ex):
-                                block[count, tframe] = input[store_pos, j % Sy, i % Sx]
-                                count += 1
+				sx = nx * blk_strides[1] + shiftx
+				ex = sx + blk_shape[1]
 
-                # Svd
-                u, s, vh = np.linalg.svd(block, full_matrices=False)
+				block = np.zeros(bmat_shape, input.dtype)
 
-                for k in range(u.shape[1]):
+				# Grab a block
+				for tframe in range(num_frames):
+					count = 0
+					for encode in range(num_encodes):
+						store_pos = int(tframe * num_encodes + encode)
+						for j in range(sy, ey):
+							for i in range(sx, ex):
+								block[count, tframe] = input[store_pos, j % Sy, i % Sx]
+								count += 1
 
-                    # s[k] = max(s[k] - lamda, 0)
-                    abs_input = abs(s[k])
-                    if abs_input == 0:
-                        sign = 0
-                    else:
-                        sign = s[k] / abs_input
+				# Svd
+				u, s, vh = np.linalg.svd(block, full_matrices=False)
 
-                    s[k] = abs_input - lamda
-                    s[k] = (abs(s[k]) + s[k]) / 2
-                    s[k] = s[k] * sign
+				for k in range(u.shape[1]):
 
-                    for i in range(u.shape[0]):
-                        u[i, k] *= s[k]
+					# s[k] = max(s[k] - lamda, 0)
+					abs_input = abs(s[k])
+					if abs_input == 0:
+						sign = 0
+					else:
+						sign = s[k] / abs_input
 
-                block = np.dot(u, vh)
+					s[k] = abs_input - lamda
+					s[k] = (abs(s[k]) + s[k]) / 2
+					s[k] = s[k] * sign
 
-                # Put block back
-                for tframe in range(num_frames):
-                    count = 0
-                    for encode in range(num_encodes):
-                        store_pos = int(tframe * num_encodes + encode)
-                        for j in range(sy, ey):
-                            for i in range(sx, ex):
-                                output[store_pos, j % Sy, i % Sx] += scale*block[count, tframe]
-                                count += 1
+					for i in range(u.shape[0]):
+						u[i, k] *= s[k]
 
-    return output
+				block = np.dot(u, vh)
+
+				# Put block back
+				for tframe in range(num_frames):
+					count = 0
+					for encode in range(num_encodes):
+						store_pos = int(tframe * num_encodes + encode)
+						for j in range(sy, ey):
+							for i in range(sx, ex):
+								output[store_pos, j % Sy, i % Sx] += scale*block[count, tframe]
+								count += 1
+
+	return output

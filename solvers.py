@@ -15,7 +15,7 @@ async def fista(xp, x, alpha, gradstep, prox, maxiter):
         xp.copyto(x_old, x)
         xp.copyto(x, z)
 
-        await gradstep(x, alpha)
+        ret = await gradstep(x, alpha)
 
         await prox(x, alpha, z)
 

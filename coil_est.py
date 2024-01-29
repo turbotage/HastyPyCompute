@@ -1,5 +1,6 @@
 import cupy as cp
 import cufinufft
+import numpy as np
 from scipy.signal import tukey
 import math
 import util
@@ -44,14 +45,17 @@ async def low_res_sensemap(coord, kdata, weights, im_size, tukey_param=(0.95, 0.
 			cif[:] *= window
 			cif[:] = cp.fft.fftshift(cp.fft.ifftn(cp.fft.ifftshift(cif)))
 
-		sos = cp.sqrt(cp.sum(cp.square(cp.abs(coil_images_filtered)), axis=0))
-		sos += cp.max(sos)*1e-5
+		coil_images_filtered = coil_images_filtered.get()
+		coil_images = coil_images.get()
+
+		sos = np.sqrt(np.sum(np.square(np.abs(coil_images_filtered)), axis=0))
+		sos += np.max(sos)*1e-5
 
 		smaps = coil_images_filtered / sos
 		del coil_images_filtered
-		image = cp.sum(cp.conj(smaps) * coil_images, axis=0) / cp.sum(cp.conj(smaps)*smaps, axis=0)
+		image = np.sum(np.conj(smaps) * coil_images, axis=0) / np.sum(np.conj(smaps)*smaps, axis=0)
 
-		return smaps.get(), image[None,...].get()
+		return smaps, image[None,...]
 	else:
 		raise RuntimeError('Not Implemented Dimension')
 
@@ -59,35 +63,35 @@ async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, ite
 	dev = cp.cuda.Device(0)
 
 	async def snormal(smpnew):
-		return await grad.device_gradient_step_s(smpnew, img, coord, None, weights, None, devicectx)
+		return await grad.gradient_step_s(smpnew, img, coord, None, weights, None, devicectx)
 
 	async def inormal(imgnew):
-		return await grad.device_gradient_step_x(smp, imgnew, [coord], None, [weights], None, devicectx)
+		return await grad.gradient_step_x(smp, imgnew, [coord], None, [weights], None, [devicectx])
 
 	async def gradx(ximg, a):
-		norm = await grad.device_gradient_step_x(smp, ximg, [coord], [kdata], [weights], a, devicectx, calcnorm=True)
-		print(f"Data Error: {norm[0]}")
+		norm = await grad.gradient_step_x(smp, ximg, [coord], [kdata], [weights], a, [devicectx], calcnorm=True)
+		print(f"Data Error: {norm[0][0]}")
 	
 	async def grads(smp, a):
-		norm = await grad.device_gradient_step_s(smp, img, coord, kdata, weights, a, devicectx, calcnorm=True)
+		norm = await grad.gradient_step_s(smp, img, coord, kdata, weights, a, devicectx, calcnorm=True)
 		print(f"Data Error: {norm}")
 
 	proxx = prox.dctprox(lamda[0])
-	proxs = prox.fftprox(lamda[1])
+	proxs = prox.spatial_svtprox(lamda[1], [16,16,16], [16,16,16], 4)
 
 	#alpha_i = 0.5 / await solvers.max_eig(cp, inormal, cp.ones_like(img), 8)
-	alpha_i = 0.25 / await solvers.max_eig(cp, inormal, util.complex_rand(img.shape, xp=cp), 8)
+	alpha_i = 0.25 / await solvers.max_eig(np, inormal, util.complex_rand(img.shape, xp=np), 8)
 
 	img.fill(0.0)
-	await solvers.fista(cp, img, alpha_i, gradx, proxx, 15)
+	await solvers.fista(np, img, alpha_i, gradx, proxx, 15)
 
-	alpha_s = 0.125 / await solvers.max_eig(cp, snormal, smp, 8)
+	alpha_s = 0.125 / await solvers.max_eig(np, snormal, util.complex_rand(smp.shape, xp=np), 8)
 
 	async def update():
 		print('S update:')		
-		await solvers.fista(cp, smp, alpha_s, grads, proxs, iter[1][0])
+		await solvers.fista(np, smp, alpha_s, grads, proxs, iter[1][0])
 		print('I update:')
-		await solvers.fista(cp, img, alpha_i, gradx, proxx, iter[1][1])
+		await solvers.fista(np, img, alpha_i, gradx, proxx, iter[1][1])
 
 	for it in range(iter[0]):
 		await update()
