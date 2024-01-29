@@ -3,6 +3,7 @@ import numba as nb
 import cupy as cp
 import numpy as np
 import time
+import gc
 
 import asyncio
 import concurrent
@@ -100,7 +101,7 @@ def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bst
 
 #@nb.jit(nopython=True, cache=True, parallel=True)'
 @nb.jit(nopython=True, cache=True, nogil=True)
-def spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, dir):
+def spatial_block_fetcher_3d_numba(input, shifts, br, Sr, bshape, bstrides, dir):
 	bx = br[0]
 	by = br[1]
 	bz = br[2]
@@ -109,9 +110,6 @@ def spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides
 	Sy = Sr[1]
 	Sz = Sr[2]
 
-	shiftx = shifts[0, iter]
-	shifty = shifts[1, iter]
-	shiftz = shifts[2, iter]
 
 	if dir == 'x':
 		large_block = np.empty((bx * by * bz, bshape[1]*bshape[2], bshape[0]), dtype=np.complex64)
@@ -121,17 +119,17 @@ def spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides
 		large_block = np.empty((bx * by * bz, bshape[0]*bshape[1], bshape[2]), dtype=np.complex64)
 
 	block_counter = 0
-	for nz in range(bz): #nb.prange(bz):
-		sz = nz * bstrides[2] + shiftz
-		ez = sz + bshape[2]
+	for nx in range(bx):
+		sx = nx * bstrides[0] + shifts[0]
+		ex = sx + bshape[0]
 
 		for ny in range(by):
-			sy = ny * bstrides[1] + shifty
+			sy = ny * bstrides[1] + shifts[1]
 			ey = sy + bshape[1]
 
-			for nx in range(bx):
-				sx = nx * bstrides[0] + shiftx
-				ex = sx + bshape[0]
+			for nz in range(bz): #nb.prange(bz):
+				sz = nz * bstrides[2] + shifts[2]
+				ez = sz + bshape[2]
 
 				dircount = 0
 				if dir == 'x':
@@ -164,7 +162,7 @@ def spatial_block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides
 	return large_block
 
 @nb.jit(nopython=True, cache=True, nogil=True)
-def spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, scale, dir):
+def spatial_block_pusher_3d_numba(output, large_block, shifts, br, Sr, bshape, bstrides, scale, dir):
 	bx = br[0]
 	by = br[1]
 	bz = br[2]
@@ -173,22 +171,18 @@ def spatial_block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bsh
 	Sy = Sr[1]
 	Sz = Sr[2]
 
-	shiftx = shifts[0, iter]
-	shifty = shifts[1, iter]
-	shiftz = shifts[2, iter]
-
 	block_counter = 0
-	for nz in range(bz):
-		sz = nz * bstrides[2] + shiftz
-		ez = sz + bshape[2]
+	for nx in range(bx):
+		sx = nx * bstrides[0] + shifts[0]
+		ex = sx + bshape[0]
 
 		for ny in range(by):
-			sy = ny * bstrides[1] + shifty
+			sy = ny * bstrides[1] + shifts[1]
 			ey = sy + bshape[1]
 
-			for nx in range(bx):
-				sx = nx * bstrides[0] + shiftx
-				ex = sx + bshape[0]
+			for nz in range(bz):
+				sz = nz * bstrides[2] + shifts[2]
+				ez = sz + bshape[2]
 
 				dircount = 0
 				# Pushes x block
@@ -228,17 +222,20 @@ def softthresh_func(s, lamda):
 def thresh_blocks(lblock, lamda, max_run_blocks):
 	stream = cp.cuda.Stream(non_blocking=True)
 
-	runs = lblock.shape[0] // max_run_blocks
+	runs = math.ceil(lblock.shape[0] / max_run_blocks)
 	with stream:
-		for i in range(runs):
-			offset = i*max_run_blocks
-			cu_lblock = cp.array(lblock[offset:(offset + max_run_blocks),...])
+		for run in range(runs):
+			start = run*max_run_blocks
+			end = min(start + max_run_blocks, lblock.shape[0])
+
+			cu_lblock = cp.array(lblock[start:end,...])
 			u, s, v = cp.linalg.svd(cu_lblock, full_matrices=False)
 			s = softthresh_func(s, lamda)
 			cu_lblock = u @ (s[...,None] * v)
-			lblock[offset:(offset + max_run_blocks),...] = cu_lblock.get()
+			lblock[start:end,...] = cu_lblock.get()
 
-	stream.synchronize()
+	del cu_lblock, u, s, v
+	cp.get_default_memory_pool().free_all_blocks()
 
 	return lblock
 			
@@ -305,51 +302,61 @@ async def my_spatial_svt3(output, input, lamda, blk_shape, blk_strides, block_it
 
 	scale = float(1.0 / (3 * block_iter))
 
-	shifts = np.zeros((3, block_iter), np.int32)
+	shifts = np.zeros((3, 3, block_iter), np.int32)
 	for d in range(3):
-		for biter in range(block_iter):
-			shifts[d,biter] = np.random.randint(blk_shape[d])
+		for axis in range(3):
+			for biter in range(block_iter):
+				shifts[d,axis,biter] = np.random.randint(blk_shape[d])
 
 	loop = asyncio.get_event_loop()
-	executor = concurrent.futures.ThreadPoolExecutor(max_workers=16)
+	executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-	def fetch_and_thresh(frame, iter, dir):
+	def fetch_and_thresh(frame, local_shifts, dir):
+
 		start = time.time()
-		large_block =  spatial_block_fetcher_3d_numba(input[frame,...], iter, shifts, br, Sr, blk_shape, blk_strides, dir)
+		large_block =  spatial_block_fetcher_3d_numba(np.ascontiguousarray(input[frame,...]), local_shifts, br, Sr, blk_shape, blk_strides, dir)
 		end = time.time()
 		#print(f"Fetcher Time = {end - start}")
 
 		start = time.time()
-		large_block = thresh_blocks(large_block, lamda, 100)
+		large_block = thresh_blocks(large_block, lamda, 200)
 		end = time.time()
 		#print(f"SoftThresh Time = {end - start}")
 
 		start = time.time()
-		spatial_block_pusher_3d_numba(output[frame,...], large_block, iter, shifts, br, Sr, blk_shape, blk_strides, scale, dir)
+		spatial_block_pusher_3d_numba(output[frame,...], large_block, local_shifts, br, Sr, blk_shape, blk_strides, scale, dir)
 		end = time.time()
 		#print(f"Pusher Time = {end - start}")
 		#print(f"Frame = {frame}, iter = {iter}, dir = {dir}")
 
-	async def run_frames(dir, iter):
+	async def run_frames(dir, local_shifts):
 		futures = []
 		for frame in range(input.shape[0]):
-			futures.append(loop.run_in_executor(executor, fetch_and_thresh, frame, iter, dir))
-			#await futures[-1]
+			futures.append(loop.run_in_executor(executor, fetch_and_thresh, frame, local_shifts, dir))
+	
+			if len(futures) > 4:
+				await futures[0]
+				del futures[0]
+	
 		for fut in futures:
 			await fut
 
+	#def run_frames(dir, local_shifts):
+	#	for frame in range(input.shape[0]):
+	#		fetch_and_thresh(frame, local_shifts, dir)
+
 	for iter in range(block_iter):
-
 		# X-dir
-		await run_frames('x', iter)
-
+		local_shifts = np.array([shifts[0, 0, iter], shifts[1, 0, iter], shifts[2, 0, iter]])
+		await run_frames('x', local_shifts)
 		# Y-dir
-		await run_frames('y', iter)
-
+		local_shifts = np.array([shifts[0, 1, iter], shifts[1, 1, iter], shifts[2, 1, iter]])
+		await run_frames('y', local_shifts)
         # Z-dir
-		await run_frames('z', iter)
+		local_shifts = np.array([shifts[0, 2, iter], shifts[1, 2, iter], shifts[2, 2, iter]])
+		await run_frames('z', local_shifts)
 
-
+	cp.get_default_memory_pool().free_all_blocks()
 	return output
 
 

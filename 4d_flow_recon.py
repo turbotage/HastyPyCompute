@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 import util
+import gc
 import load_data
 import asyncio
 import concurrent
@@ -25,7 +26,7 @@ async def main():
 
 	imsize = (160,160,160)
 
-	load_from_zero = True
+	load_from_zero = False
 	if load_from_zero:
 		start = time.time()
 		dataset = await load_data.load_flow_data('/home/turbotage/Documents/4DRecon/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
@@ -36,6 +37,11 @@ async def main():
 		dataset = await load_data.gate_time(dataset)
 		end = time.time()
 		print(f"Gate Time={end - start} s")
+
+		start = time.time()
+		dataset['kdatas'] = coil_est.coil_compress(dataset['kdatas'], 0, 32)
+		end = time.time()
+		print(f"Compress Time={end - start} s")
 
 		start = time.time()
 		dataset = await load_data.flatten(dataset)
@@ -69,48 +75,32 @@ async def main():
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
-	smpsclone = smaps.copy()
 
-	proxs = prox.spatial_svtprox(1.0, np.array([32,32,32]), np.array([32,32,32]), 4)
+	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 16, imsize, "full")
 
-	start = time.time()
-	await proxs(smpsclone, 0.1, smaps.copy())
-	end = time.time()
-	print(f"Time: {end - start} s")
+	do_isense = False
+	if do_isense:
+		smaps, image, alpha_i = await coil_est.isense(image, smaps, 
+			cp.array(dataset['coords'][0]), 
+			cp.array(dataset['kdatas'][0]), 
+			cp.array(dataset['weights'][0]),
+			devicectx, 
+			iter=[3,[4,7]],
+			lamda=[0.5, 0.0002])
 
+	image = np.repeat(image, 5, axis=0)
 
-	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 11, imsize, "full")
+	async def gradx(ximg, a):
+		await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
+				a, [devicectx], calcnorm=False)
+		
+	proxx = prox.dctprox(0.5)
 
-	smaps, image = await coil_est.isense(image, smaps, 
-		cp.array(dataset['coords'][0]), 
-		cp.array(dataset['kdatas'][0]), 
-		cp.array(dataset['weights'][0]),
-		devicectx, 
-		iter=[7,[5,5]],
-		lamda=[0.5, 0.00001])
-
-
-	if False:
-		start = time.time()
-
-		output = np.empty_like(image)
-		asyncio.run(svt.my_svt3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5))
-		#svt.svt_numba3(output, image, 0.1, np.array([16,16,16]), np.array([16,16,16]), 4, 5)
-
-		end = time.time()
-
-		print(f"Time: {end - start}")
+	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 
 
-	if False:
-		start = time.time()
+	print('Save')
 
-		gradient_step(smaps, image, coords, kdata, weights, cp.cuda.Device(0), 0.1)
-		cp.cuda.stream.get_current_stream().synchronize()
-
-		end = time.time()
-
-		print(f"Time: {end - start}")
 
 
 if __name__ == "__main__":

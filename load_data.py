@@ -115,6 +115,37 @@ async def gate_time(dataset, num_encodes=5):
 
     return dataset
 
+async def gate_ecg(dataset, frames, num_encodes=5):
+    ecg_gating = dataset['gating']['ECG_E0']
+    upper_bound = 2 * np.median(ecg_gating)
+
+    step = upper_bound / frames
+
+    weights = [[] for i in range(num_encodes)]
+    kdatas = [[] for i in range(num_encodes)]
+    coords = [[] for i in range(num_encodes)]
+
+    def do_gating(enc, idxs):
+        weights[enc].append(dataset['weights'][enc][idxs,:])
+        kdatas[enc].append(dataset['kdatas'][enc][:,idxs,:])
+        coords[enc].append(dataset['coords'][enc][:,idxs,:])
+
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_encodes)
+
+    for f in range(frames):
+        idxs = (ecg_gating > f*step) & (ecg_gating < (f*step + step))
+        futures = []
+        for enc in range(num_encodes):
+            futures.append(loop.run_in_executor(executor, do_gating, enc, idxs))
+        for fut in futures:
+            await fut
+
+    dataset['weights'] = weights
+    dataset['kdatas'] = kdatas
+    dataset['coords'] = coords
+
+    return dataset
 
 def save_processed_dataset(dataset, filename):
     with h5py.File(filename, 'w') as f:
