@@ -96,6 +96,7 @@ async def low_res_sensemap(coord, kdata, weights, im_size, tukey_param=(0.95, 0.
 		del coil_images_filtered
 		image = np.sum(np.conj(smaps) * coil_images, axis=0) / np.sum(np.conj(smaps)*smaps, axis=0)
 
+		cp.get_default_memory_pool().free_all_blocks()
 
 		return smaps, image[None,...]
 	else:
@@ -125,7 +126,7 @@ async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, ite
 	alpha_i = 0.25 / await solvers.max_eig(np, inormal, util.complex_rand(img.shape, xp=np), 8)
 
 	img.fill(0.0)
-	await solvers.fista(np, img, alpha_i, gradx, proxx, 15)
+	await solvers.fista(np, img, alpha_i, gradx, proxx, 10)
 
 	alpha_s = 0.125 / await solvers.max_eig(np, snormal, util.complex_rand(smp.shape, xp=np), 8)
 

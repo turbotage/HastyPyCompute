@@ -69,6 +69,9 @@ class DeviceCtx:
 			self.backward_plan = backward_plan
 
 	def setpts_forward(self, coord):
+		if self.type == "none":
+			self.coord = coord
+
 		if coord.shape[0] == 1:
 			self.forward_plan.setpts(x=coord[0,:])
 		elif coord.shape[0] == 2:
@@ -79,6 +82,9 @@ class DeviceCtx:
 			raise ValueError(f"Invalid number of coordinates ({coord.shape[0]})")
 
 	def setpts_backward(self, coord):
+		if self.type == "none":
+			self.coord = coord
+
 		if coord.shape[0] == 1:
 			self.backward_plan.setpts(x=coord[0,:])
 		elif coord.shape[0] == 2:
@@ -89,19 +95,37 @@ class DeviceCtx:
 			raise ValueError(f"Invalid number of coordinates ({coord.shape[0]})")
 		
 	def setpts(self, coord):
-		self.setpts_forward(coord)
-		self.setpts_backward(coord)
+		if self.type == "none":
+			self.coord = coord
+		else:
+			self.setpts_forward(coord)
+			self.setpts_backward(coord)
 
 	def forward_execute(self, input, out):
 		if self.forward_plan is not None:
 			self.forward_plan.execute(input, out)
 			out *= self.normfactor
+		elif self.type == "none":
+			if self.coord.shape[0] == 1:
+				cufinufft.nufft1d2(x=self.coord[0], data=input, out=out, eps=1e-4)
+			elif self.coord.shape[0] == 2:
+				cufinufft.nufft2d2(x=self.coord[0], y=self.coord[1], data=input, out=out, eps=1e-4)
+			elif self.coord.shape[0] == 3:
+				cufinufft.nufft3d2(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, out=out, eps=1e-4)
+
 
 	def backward_execute(self, input, out):
 		if self.backward_plan is not None:
 			input *= self.normfactor
 			self.backward_plan.execute(input, out)
 			#out *= self.normfactor
+		elif self.type == "none":
+			if self.coord.shape[0] == 1:
+				cufinufft.nufft1d1(x=self.coord[0], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
+			elif self.coord.shape[0] == 2:
+				cufinufft.nufft2d1(x=self.coord[0], y=self.coord[1], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
+			elif self.coord.shape[0] == 3:
+				cufinufft.nufft3d1(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
 
 
 # Inputs shall be on CPU or GPU, computes x = x - alpha * S^HN^H(W(NSx-b)) or returns S^HN^HWN^HSx
@@ -210,7 +234,7 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 		end = start + fpd
 		futures.append(loop.run_in_executor(executor, device_gradient_step_x,
 			smaps, 
-			images[start:end], 
+			images[start:end,...], 
 			coords[start:end], 
 			None if kdatas is None else kdatas[start:end], 
 			weights[start:end], 
@@ -221,15 +245,15 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 	normlist = []
 
 	start = 0
-	for i in range(len(futures)):
-		end = start + frames_per_device[i]
-
+	for i, fut in enumerate(futures):
 		if alpha is None:
-			images_out[start:end] = await (await futures[i])
+			end = start + frames_per_device[i]
+			images_out[start:end] = await (await fut)
+			start = end
 		elif calcnorm:
-			normlist.append(await (await futures[i]))
+			normlist.append(await (await fut))
 		else:
-			await futures
+			await (await fut)
 
 	if alpha is None:
 		return images_out

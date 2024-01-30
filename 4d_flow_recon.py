@@ -24,7 +24,7 @@ import prox
 
 async def main():
 
-	imsize = (160,160,160)
+	imsize = (320,320,320)
 
 	load_from_zero = False
 	if load_from_zero:
@@ -76,16 +76,16 @@ async def main():
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
 
-	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 16, imsize, "full")
+	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 1, imsize, "none")
 
-	do_isense = False
+	do_isense = True
 	if do_isense:
 		smaps, image, alpha_i = await coil_est.isense(image, smaps, 
 			cp.array(dataset['coords'][0]), 
 			cp.array(dataset['kdatas'][0]), 
 			cp.array(dataset['weights'][0]),
 			devicectx, 
-			iter=[3,[4,7]],
+			iter=[1,[2,4]],
 			lamda=[0.5, 0.0002])
 
 	image = np.repeat(image, 5, axis=0)
