@@ -5,11 +5,15 @@ from scipy.signal import tukey
 import math
 import util
 
+from jinja2 import Template
+
 import grad
 import solvers
 import prox
-import gc
+import gjin
+import re
 
+import numba as nb
 
 def coil_covariance(x):
     covmat = np.empty((x.shape[0], x.shape[0]))
@@ -141,3 +145,55 @@ async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, ite
 
 	return smp, img, alpha_i
 		
+
+
+@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
+def block_fetcher_3d_numba(coil_images, zrange, yrange, xrange, blk_size):
+
+	imsize = coil_images.shape[2;]
+	ncoil = coil_images.shape[0]
+	nenc = coil_images.shape[1]
+
+	nblock = (zrange[1] - zrange[0]) * (yrange[1] - yrange[0]) * (xrange[1] - xrange[0])
+
+	large_block = np.empty((nblock,ncoil,nenc*math.prod(blk_size)), dtype=coil_images.dtype)
+
+	for nz in nb.prange(zrange[0], zrange[1]):
+		for ny in range(yrange[0], yrange[1]):
+			for nx in range(xrange[0], xrange[1]):
+				
+				idx = [nx, ny, nz]
+
+				start = [0,0,0]
+				end = [0,0,0]
+				for i in range(3):
+					startl = idx[i] - blk_size[i] // 2
+					endl = idx[i] + blk_size[i] // 2
+
+					if startl < 0:
+						startl = 0
+						endl = startl + blk_size[i]
+					elif endl > imsize[i]:
+						startl = imsize[i] - blk_size[i]
+						endl = imsize[i]
+
+					start[i] = startl
+					end[i] = endl
+
+				for c in range(ncoil):
+					count = 0
+					for e in range(nenc):
+						for x in range(start[0], end[0]):
+							for y in range(start[1], end[1]):
+								for z in range(start[2], end[2]):
+									large_block[count,c,e*math.prod(blk_size):(e+1)*math.prod(blk_size)] = coil_images[c,e,x,y,z]
+									count += 1
+
+	return large_block
+
+
+
+async def walsh(coil_images, blk_size):
+	# loop over xrange, yrange and zrange in block_fetcher_3d_numba
+	# in every loop, do svd stuff on large_block, and then output into output coil images
+

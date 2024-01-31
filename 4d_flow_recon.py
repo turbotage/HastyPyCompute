@@ -86,7 +86,7 @@ async def main():
 			cp.array(dataset['weights'][0]),
 			devicectx, 
 			iter=[1,[2,4]],
-			lamda=[0.5, 0.0002])
+			lamda=[0.05, 0.0002])
 
 	image = np.repeat(image, 5, axis=0)
 
@@ -94,9 +94,12 @@ async def main():
 		await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
 				a, [devicectx], calcnorm=False)
 		
-	proxx = prox.dctprox(0.5)
+	proxx = prox.dctprox(0.05)
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
+
+
+
 
 
 	print('Save')
