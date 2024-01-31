@@ -29,7 +29,7 @@ async def main():
 	load_from_zero = False
 	if load_from_zero:
 		start = time.time()
-		dataset = await load_data.load_flow_data('/home/turbotage/Documents/4DRecon/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
+		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/COBRA191/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
 		end = time.time()
 		print(f"Load Time={end - start} s")
 		
@@ -62,14 +62,16 @@ async def main():
 			wd[:] /= maxval
 
 		start = time.time()
-		load_data.save_processed_dataset(dataset, '/home/turbotage/Documents/4DRecon/dataset.h5')
+		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/COBRA191/dataset.h5')
 		end = time.time()
 		print(f"Save Dataset Time={end - start} s")
 	else:
 		start = time.time()
-		dataset = load_data.load_processed_dataset('/home/turbotage/Documents/4DRecon/dataset.h5')
+		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/COBRA191/dataset.h5')
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
+
+	smaps = await coil_est.walsh(list([dataset['coords'][0]]), list([dataset['kdatas'][0]]), list([dataset['weights'][0]]), imsize)
 
 
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
@@ -78,7 +80,7 @@ async def main():
 
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 16, imsize, "full")
 
-	do_isense = False
+	do_isense = True
 	if do_isense:
 		smaps, image, alpha_i = await coil_est.isense(image, smaps, 
 			cp.array(dataset['coords'][0]), 
