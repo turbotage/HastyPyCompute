@@ -210,14 +210,17 @@ def block_pusher_3d_numba(coil_images_out, U, S, xrange, yrange, zrange, refc):
 					coil_images_out[c, idx[0], idx[1], idx[2]] = temp
     
 
+#def create coil_images 
 
-async def walsh(coil_images, blk_size):
+async def walsh(coil_images, refc, blk_size):
 	# loop over xrange, yrange and zrange in block_fetcher_3d_numba
 	# in every loop, do svd stuff on large_block, and then output into output coil images
 
 	nenc = coil_images.shape[0]
 	ncoil = coil_images.shape[1]
 	imsize = coil_images.shape[2:]
+
+
 
 	xranges = [
 				[0, 			 		imsize[0] // 4], 
@@ -234,12 +237,15 @@ async def walsh(coil_images, blk_size):
 			for zranges in zranges:
 				large_block = block_fetcher_3d_numba(coil_images, zranges, [y, y+1], xrange, blk_size)
 
+				# Loop over blocks to not run out of memory on gpu
 				large_block = cp.array(large_block)
 				U, S, _ = cp.linalg.svd(large_block, full_matrices=False)
+				U = U.get()
+				S = S.get()
 		
-				block_pusher_3d_numba(coil_images_out, U, S, xrange, [y, y+1], zranges, 0)
+				block_pusher_3d_numba(coil_images_out, U, S, xrange, [y, y+1], zranges, refc)
 
-	
+	return coil_images_out
 
     
 	
