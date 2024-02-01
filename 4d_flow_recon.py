@@ -3,6 +3,8 @@ import svt
 import math
 import time
 import numpy as np
+import random
+import h5py
 
 import util
 import gc
@@ -22,9 +24,9 @@ import prox
 
 
 
-async def main():
+async def main(lx=0.5, ls=0.0002):
 
-	imsize = (160,160,160)
+	imsize = (320,320,320)
 
 	load_from_zero = False
 	if load_from_zero:
@@ -71,14 +73,14 @@ async def main():
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
 
-	smaps = await coil_est.walsh(list([dataset['coords'][0]]), list([dataset['kdatas'][0]]), list([dataset['weights'][0]]), imsize)
+	# smaps = await coil_est.walsh(list([dataset['coords'][0]]), list([dataset['kdatas'][0]]), list([dataset['weights'][0]]), imsize)
 
 
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
 
-	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 16, imsize, "full")
+	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
 
 	do_isense = True
 	if do_isense:
@@ -87,8 +89,8 @@ async def main():
 			cp.array(dataset['kdatas'][0]), 
 			cp.array(dataset['weights'][0]),
 			devicectx, 
-			iter=[3,[4,7]],
-			lamda=[0.5, 0.0002])
+			iter=[5,[4,7]],
+			lamda=[lx, ls])
 
 	image = np.repeat(image, 5, axis=0)
 
@@ -96,16 +98,22 @@ async def main():
 		await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
 				a, [devicectx], calcnorm=False)
 		
-	proxx = prox.dctprox(0.5)
+	proxx = prox.dctprox(lx)
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 
-
+	filename = f'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lx{lx}_ls{ls}.h5'
 	print('Save')
-
-
+	with h5py.File(filename, 'w') as f:
+		f['image'] = image
+		f['smaps'] = smaps
 
 if __name__ == "__main__":
-	asyncio.run(main())
+	for i in range(100):
+		print(f'Iteration number: {i}')
+		lambda_x = 10**(random.uniform(0, -4))
+		lambda_s = 10**(random.uniform(-2, -6))
+
+		asyncio.run(main(lambda_x, lambda_s))
 
 
