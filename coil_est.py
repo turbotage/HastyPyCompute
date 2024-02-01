@@ -150,17 +150,17 @@ async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, ite
 @nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
 def block_fetcher_3d_numba(coil_images, zrange, yrange, xrange, blk_size):
 
+	nenc = coil_images.shape[0]
+	ncoil = coil_images.shape[1]
 	imsize = coil_images.shape[2;]
-	ncoil = coil_images.shape[0]
-	nenc = coil_images.shape[1]
 
 	nblock = (zrange[1] - zrange[0]) * (yrange[1] - yrange[0]) * (xrange[1] - xrange[0])
 
 	large_block = np.empty((nblock,ncoil,nenc*math.prod(blk_size)), dtype=coil_images.dtype)
 
-	for nz in nb.prange(zrange[0], zrange[1]):
-		for ny in range(yrange[0], yrange[1]):
-			for nx in range(xrange[0], xrange[1]):
+	for ny in nb.prange(yrange[0], yrange[1]):
+		for nx in range(xrange[0], xrange[1]):
+			for nz in range(zrange[0], zrange[1]):
 				
 				idx = [nx, ny, nz]
 
@@ -193,7 +193,53 @@ def block_fetcher_3d_numba(coil_images, zrange, yrange, xrange, blk_size):
 
 
 
+@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
+def block_pusher_3d_numba(coil_images_out, U, S, xrange, yrange, zrange, refc):
+	blockcount = 0
+	for nx in nb.prange(xrange[0], xrange[1]):
+		for ny in range(yrange[0], yrange[1]):
+			for nz in range(zrange[0], zrange[1]):
+				
+				idx = [nx, ny, nz]
+
+				slocal = S[blockcount,...]
+				ulocal = U[blockcount,...]
+
+				for c in range(coil_images_out.shape[0]):
+					temp = np.sqrt(slocal[0]*ulocal[c,0]*np.conj(ulocal[refc,0]) / np.abs(U[refc,0]))
+					coil_images_out[c, idx[0], idx[1], idx[2]] = temp
+    
+
+
 async def walsh(coil_images, blk_size):
 	# loop over xrange, yrange and zrange in block_fetcher_3d_numba
 	# in every loop, do svd stuff on large_block, and then output into output coil images
 
+	nenc = coil_images.shape[0]
+	ncoil = coil_images.shape[1]
+	imsize = coil_images.shape[2:]
+
+	xranges = [
+				[0, 			 		imsize[0] // 4], 
+				[imsize[0] // 4, 		imsize[0] // 2],
+				[imsize[0] // 2, 		3 * (imsize[0] // 4)]
+				[3 * (imsize[0] // 4), 	imsize[0]]
+	]
+
+	zranges = xranges
+	coil_images_out = np.empty((ncoil, imsize[0], imsize[1], imsize[2]), dtype=coil_images.dtype)
+
+	for xrange in xranges:
+		for y in range(imsize[1]):
+			for zranges in zranges:
+				large_block = block_fetcher_3d_numba(coil_images, zranges, [y, y+1], xrange, blk_size)
+
+				large_block = cp.array(large_block)
+				U, S, _ = cp.linalg.svd(large_block, full_matrices=False)
+		
+				block_pusher_3d_numba(coil_images_out, U, S, xrange, [y, y+1], zranges, 0)
+
+	
+
+    
+	
