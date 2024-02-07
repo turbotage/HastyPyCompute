@@ -121,14 +121,14 @@ async def gate_ecg(dataset, frames, num_encodes=5):
 
     step = upper_bound / frames
 
-    weights = [[] for i in range(num_encodes)]
-    kdatas = [[] for i in range(num_encodes)]
-    coords = [[] for i in range(num_encodes)]
+    weights = [[] for i in range(num_encodes*frames)]
+    kdatas = [[] for i in range(num_encodes*frames)]
+    coords = [[] for i in range(num_encodes*frames)]
 
     def do_gating(enc, idxs):
-        weights[enc].append(dataset['weights'][enc][idxs,:])
-        kdatas[enc].append(dataset['kdatas'][enc][:,idxs,:])
-        coords[enc].append(dataset['coords'][enc][:,idxs,:])
+        weights[enc] = (dataset['weights'][enc % num_encodes][idxs,:])
+        kdatas[enc] = (dataset['kdatas'][enc % num_encodes][:,idxs,:])
+        coords[enc] = (dataset['coords'][enc % num_encodes][:,idxs,:])
 
     loop = asyncio.get_event_loop()
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=num_encodes)
@@ -137,7 +137,7 @@ async def gate_ecg(dataset, frames, num_encodes=5):
         idxs = (ecg_gating > f*step) & (ecg_gating < (f*step + step))
         futures = []
         for enc in range(num_encodes):
-            futures.append(loop.run_in_executor(executor, do_gating, enc, idxs))
+            futures.append(loop.run_in_executor(executor, do_gating, f*num_encodes + enc, idxs))
         for fut in futures:
             await fut
 
@@ -171,6 +171,13 @@ def load_processed_dataset(filename):
             else:
                 ret[key] = [group[gkey][()] for gkey in group.keys()]
         return ret
+    
+def load_smaps_image(filename):
+    with h5py.File(filename, 'r') as f:
+        image = f['image'][()]
+        smaps = f['smaps'][()]
+
+        return smaps, image
 
 
 async def crop_kspace(dataset, im_size, crop_factors=(1.0,1.0,1.0), prefovkmuls=(1.0,1.0,1.0), postfovkmuls=(1.0,1.0,1.0)):

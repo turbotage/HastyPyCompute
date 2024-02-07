@@ -248,7 +248,7 @@ def thresh_blocks(lblock, lamda, max_run_blocks):
 async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_encodes):
 	imsize = input.shape[1:]
 	br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
-	Sr = np.array([int(imsize[1]), int(imsize[2]), int(imsize[3])])
+	Sr = np.array([int(imsize[0]), int(imsize[1]), int(imsize[2])])
 
 	scale = float(1.0 / block_iter)
 
