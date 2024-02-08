@@ -25,7 +25,7 @@ def block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_en
 
 	large_block = np.empty((bx * by * bz, bshape[0]*bshape[1]*bshape[2]*num_encodes, num_frames), dtype=np.complex64)
 
-	block_counter = 0
+	
 	for nz in nb.prange(bz):
 		sz = nz * bstrides[0] + shiftz
 		ez = sz + bshape[0]
@@ -38,6 +38,7 @@ def block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_en
 				sx = nx * bstrides[2] + shiftx
 				ex = sx + bshape[2]
 
+				block_counter = nx + ny*bx + nz*by*bx
 				for tframe in range(num_frames):
 					count = 0
 					for encode in range(num_encodes):
@@ -48,14 +49,12 @@ def block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_en
 									large_block[block_counter, count, tframe] = input[store_pos, x % Sx, y % Sy, z % Sz]
 									count += 1
 
-				block_counter += 1
-
 	return large_block
 
 #def block_fetcher_3d(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames):
 #    return block_fetcher_3d_numba(input, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames)
 
-@nb.jit(nopython=True, cache=True, parallel=True)
+@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
 def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
 	bx = br[0]
 	by = br[1]
@@ -69,7 +68,6 @@ def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bst
 	shifty = shifts[1, iter]
 	shiftx = shifts[2, iter]
 
-	block_counter = 0
 	for nz in nb.prange(bz):
 		sz = nz * bstrides[0] + shiftz
 		ez = sz + bshape[0]
@@ -83,6 +81,7 @@ def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bst
 				ex = sx + bshape[2]
 
 				# Put block back
+				block_counter = nx + ny*bx + nz*by*bx
 				for tframe in range(num_frames):
 					count = 0
 					for encode in range(num_encodes):
@@ -93,7 +92,6 @@ def block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, bshape, bst
 									output[store_pos, x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, tframe]
 									count += 1
 
-				block_counter += 1
 
 
 #def block_pusher_3d(output, large_block, iter, shifts, br, Sr, bshape, bstrides, num_encodes, num_frames, scale):
@@ -248,7 +246,7 @@ def thresh_blocks(lblock, lamda, max_run_blocks):
 async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_encodes):
 	imsize = input.shape[1:]
 	br = np.array([imsize[0] // blk_strides[0], imsize[1] // blk_strides[1], imsize[2] // blk_strides[2]])
-	Sr = np.array([int(imsize[1]), int(imsize[2]), int(imsize[3])])
+	Sr = np.array([int(imsize[0]), int(imsize[1]), int(imsize[2])])
 
 	scale = float(1.0 / block_iter)
 

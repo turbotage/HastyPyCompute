@@ -4,14 +4,16 @@ import numpy as np
 from scipy.signal import tukey
 import math
 import util
+import time
 
-from jinja2 import Template
+#from jinja2 import Template
 
 import grad
 import solvers
 import prox
-import gjin
-import re
+import gc
+#import gjin
+#import re
 
 import numba as nb
 
@@ -138,28 +140,30 @@ async def isense(img, smp, coord, kdata, weights, devicectx: grad.DeviceCtx, ite
 		print('S update:')		
 		await solvers.fista(np, smp, alpha_s, grads, proxs, iter[1][1])
 		print('I update:')
-		await solvers.fista(np, img, alpha_i, gradx, proxx, iter[1][0])
-
+		resids = await solvers.fista(np, img, alpha_i, gradx, proxx, iter[1][0])
+		return resids
+	
 	for it in range(iter[0]):
-		await update()
+		resids = await update()
 
-	return smp, img, alpha_i
+	return smp, img, alpha_i, resids
 		
 
 
 @nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
-def block_fetcher_3d_numba(coil_images, zrange, yrange, xrange, blk_size):
+def block_fetcher_3d_numba(coil_images, xrange, yrange, zrange, blk_size):
 
 	nenc = coil_images.shape[0]
 	ncoil = coil_images.shape[1]
-	imsize = coil_images.shape[2;]
+	imsize = coil_images.shape[2:]
 
 	nblock = (zrange[1] - zrange[0]) * (yrange[1] - yrange[0]) * (xrange[1] - xrange[0])
 
-	large_block = np.empty((nblock,ncoil,nenc*math.prod(blk_size)), dtype=coil_images.dtype)
+	large_block = np.empty((nblock,ncoil,nenc*np.prod(blk_size)), dtype=coil_images.dtype)
 
-	for ny in nb.prange(yrange[0], yrange[1]):
-		for nx in range(xrange[0], xrange[1]):
+	blockcount = 0
+	for nx in nb.prange(xrange[0], xrange[1]):
+		for ny in range(yrange[0], yrange[1]):
 			for nz in range(zrange[0], zrange[1]):
 				
 				idx = [nx, ny, nz]
@@ -186,8 +190,10 @@ def block_fetcher_3d_numba(coil_images, zrange, yrange, xrange, blk_size):
 						for x in range(start[0], end[0]):
 							for y in range(start[1], end[1]):
 								for z in range(start[2], end[2]):
-									large_block[count,c,e*math.prod(blk_size):(e+1)*math.prod(blk_size)] = coil_images[c,e,x,y,z]
+									large_block[blockcount,c,count] = coil_images[e,c,x,y,z]
 									count += 1
+
+				blockcount += 1
 
 	return large_block
 
@@ -205,14 +211,58 @@ def block_pusher_3d_numba(coil_images_out, U, S, xrange, yrange, zrange, refc):
 				slocal = S[blockcount,...]
 				ulocal = U[blockcount,...]
 
+				ufactor = np.conj(ulocal[refc,0]) / np.abs(ulocal[refc,0])
+
 				for c in range(coil_images_out.shape[0]):
-					temp = np.sqrt(slocal[0]*ulocal[c,0]*np.conj(ulocal[refc,0]) / np.abs(U[refc,0]))
+					temp = np.sqrt(slocal[0]*ulocal[c,0]*ufactor)
 					coil_images_out[c, idx[0], idx[1], idx[2]] = temp
+
+				blockcount += 1
     
 
-#def create coil_images 
+def create_coil_images(coord, kdata, weights, im_size):
+	dim = len(im_size)
+	ncoil = kdata[0].shape[0]
+	nencs = len(kdata)
+	
+	normfactor = 1.0 / math.sqrt(math.prod(im_size))
 
-async def walsh(coil_images, refc, blk_size):
+	coil_images = np.empty((nencs, ncoil,) + im_size, dtype=kdata[0].dtype)
+
+
+	if dim == 3:
+
+		# Calculate coil images
+		for e in range(nencs):
+			for i in range(ncoil):
+				kdatacu = cp.array(kdata[e][i,...] * weights[e])
+				ci = cp.array(coil_images[e,i,...])
+				coordcu = cp.array(coord[e])
+
+				kdatacu *= normfactor
+
+				cufinufft.nufft3d1(x=coordcu[0,:], y=coordcu[1,:], z=coordcu[2,:], data=kdatacu,
+					n_modes=coil_images.shape[2:], out=ci, eps=1e-5)
+				
+				coil_images[e,i,...] = ci.get()
+				
+
+	# Use coil with maximum signal as reference
+	ref_c = 0
+	max_i = 0
+	for c in range(ncoil):
+		intensity = 0
+		for e in range(nencs):
+			intensity += np.sum(np.linalg.norm(coil_images[e, c]))
+
+		if intensity > max_i:
+			ref_c = c
+			max_i = intensity
+				
+	return coil_images, ref_c
+
+
+def walsh(coil_images, refc, blk_size):
 	# loop over xrange, yrange and zrange in block_fetcher_3d_numba
 	# in every loop, do svd stuff on large_block, and then output into output coil images
 
@@ -222,30 +272,89 @@ async def walsh(coil_images, refc, blk_size):
 
 
 
-	xranges = [
+	xranges = np.array([
 				[0, 			 		imsize[0] // 4], 
 				[imsize[0] // 4, 		imsize[0] // 2],
-				[imsize[0] // 2, 		3 * (imsize[0] // 4)]
+				[imsize[0] // 2, 		3 * (imsize[0] // 4)],
 				[3 * (imsize[0] // 4), 	imsize[0]]
-	]
+	])
 
 	zranges = xranges
 	coil_images_out = np.empty((ncoil, imsize[0], imsize[1], imsize[2]), dtype=coil_images.dtype)
 
-	for xrange in xranges:
+	for xi in range(xranges.shape[0]):
 		for y in range(imsize[1]):
-			for zranges in zranges:
-				large_block = block_fetcher_3d_numba(coil_images, zranges, [y, y+1], xrange, blk_size)
+			for zi in range(zranges.shape[0]):
+				start = time.time()
+				large_block = block_fetcher_3d_numba(coil_images.get(), xranges[xi], np.array([y, y+1]), zranges[zi], blk_size)
+				end = time.time()
+				print(f"Fetch Time={end - start}")
 
 				# Loop over blocks to not run out of memory on gpu
+				start = time.time()
 				large_block = cp.array(large_block)
 				U, S, _ = cp.linalg.svd(large_block, full_matrices=False)
 				U = U.get()
 				S = S.get()
-		
-				block_pusher_3d_numba(coil_images_out, U, S, xrange, [y, y+1], zranges, refc)
+				end = time.time()
+				print(f"SVD Time={end - start}")
+
+				start = time.time()
+				block_pusher_3d_numba(coil_images_out, U, S, xranges[xi], np.array([y, y+1]), zranges[zi], refc)
+				end = time.time()
+				print(f"Push Time={end - start}")
 
 	return coil_images_out
 
-    
-	
+
+@nb.jit(nopython=True, cache=True, parallel=True, nogil=True)
+def walsh_cpu(coil_images, refc, blk_size):
+	nenc = int(coil_images.shape[0])
+	ncoil = int(coil_images.shape[1])
+	imsize = coil_images.shape[2:]
+
+	coil_images_out = np.empty((ncoil,imsize[0],imsize[1],imsize[2]), dtype=np.complex64)
+
+	for nx in nb.prange(imsize[0]):
+
+		local_block = np.empty((ncoil, int(np.prod(blk_size) * nenc)), dtype=np.complex64)
+
+		for ny in range(imsize[1]):
+			for nz in range(imsize[2]):
+				
+				idx = np.array([int(nx), int(ny), int(nz)], dtype=np.int32)
+
+				start = [0,0,0]
+				end = [0,0,0]
+				for i in range(3):
+					startl = idx[i] - blk_size[i] // 2
+					endl = idx[i] + blk_size[i] // 2
+
+					if startl < 0:
+						startl = 0
+						endl = startl + blk_size[i]
+					elif endl > imsize[i]:
+						startl = imsize[i] - blk_size[i]
+						endl = imsize[i]
+
+					start[i] = int(startl)
+					end[i] = int(endl)
+
+				for c in range(ncoil):
+					count = 0
+					for e in range(nenc):
+						for x in range(start[0], end[0]):
+							for y in range(start[1], end[1]):
+								for z in range(start[2], end[2]):
+									local_block[c,count] = coil_images[e,c,x,y,z]
+									count += 1
+
+				U, S, _ = np.linalg.svd(local_block, full_matrices=False)
+
+				ufactor = np.conj(U[refc,0]) / np.abs(U[refc,0])
+				
+				for c in range(coil_images_out.shape[0]):
+					temp = np.sqrt(S[0]*U[c,0]*ufactor)
+					coil_images_out[c, idx[0], idx[1], idx[2]] = temp #local_block[0,0]
+
+	return coil_images_out

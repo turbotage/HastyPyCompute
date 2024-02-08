@@ -11,14 +11,14 @@ import concurrent
 
 class DeviceCtx:
 	def __init__(self, 
-				device: cp.cuda.Device | None, 
-				ntransf: int,
-				imshape: tuple[int],
-				type = "",
-				forward_plan: cufinufft.Plan | None = None, 
-				backward_plan: cufinufft.Plan | None = None, 
-			  ):
-		
+	device: cp.cuda.Device | None, 
+	ntransf: int,
+	imshape: tuple[int],
+	type = "",
+	forward_plan: cufinufft.Plan | None = None, 
+	backward_plan: cufinufft.Plan | None = None, 
+	):
+
 		self.device = device
 		self.ntransf = ntransf
 		self.imshape = imshape
@@ -30,41 +30,41 @@ class DeviceCtx:
 		if forward_plan is None:
 			if type == "full":
 				self.forward_plan = cufinufft.Plan(nufft_type=2, n_modes=imshape, 
-					n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
-					gpu_method=1, gpu_sort=1, gpu_kerevalmeth=0,
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
+				gpu_method=1, gpu_sort=1, gpu_kerevalmeth=0,
+				gpu_device_id=device.id)
 			elif type == "framed":
 				self.forward_plan = cufinufft.Plan(nufft_type=2, n_modes=imshape, 
-					n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=1.25,
-					gpu_method=1, gpu_sort=1, gpu_kerevalmeth=0,
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=1.25,
+				gpu_method=1, gpu_sort=1, gpu_kerevalmeth=0,
+				gpu_device_id=device.id)
 			elif type == "none":
 				self.forward_plan = None
 			else:
 				self.forward_plan = cufinufft.Plan(nufft_type=2, n_modes=imshape, 
-					n_trans=ntransf, eps=1e-4, dtype="complex64",
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64",
+				gpu_device_id=device.id)
 		else:
 			self.forward_plan = forward_plan
 
 		if backward_plan is None:
 			if type == "full":
 				self.backward_plan = cufinufft.Plan(nufft_type=1, n_modes=imshape,
-					n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
-					gpu_method=2,
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
+				gpu_method=2,
+				gpu_device_id=device.id)
 			elif type == "framed":
 				self.backward_plan = cufinufft.Plan(nufft_type=1, n_modes=imshape,
-					n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
-					gpu_method=2,
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
+				gpu_method=2,
+				gpu_device_id=device.id)
 			elif type == "none":
 				self.backward_plan = None
 			else:
 				self.backward_plan = cufinufft.Plan(nufft_type=1, n_modes=imshape,
-					n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
-					gpu_method=2,
-					gpu_device_id=device.id)
+				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
+				gpu_method=2,
+				gpu_device_id=device.id)
 		else:
 			self.backward_plan = backward_plan
 
@@ -93,7 +93,7 @@ class DeviceCtx:
 			self.backward_plan.setpts(x=coord[0,:], y=coord[1,:], z=coord[2,:])
 		else:
 			raise ValueError(f"Invalid number of coordinates ({coord.shape[0]})")
-		
+
 	def setpts(self, coord):
 		if self.type == "none":
 			self.coord = coord
@@ -148,7 +148,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 		cp.fuse(kernel_name='weights_and_kdata_func')
 		def weights_and_kdata_func(kdmem, kd, w):
 			return w*(kdmem - kd)
-		
+
 		cp.fuse(kernel_name='sum_smaps_func')
 		def sum_smaps_func(imgmem, sin, ain):
 			return ain * cp.sum(imgmem * cp.conj(sin), axis=0)
@@ -170,7 +170,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 
 				if kdatas is not None:
 					kdata_frame = cp.array(kdatas[frame][start:start+ntransf,...], copy=False)
-					
+
 				kdatamem = cp.empty((ntransf,coord_frame.shape[1]), dtype=image_frame.dtype)
 
 				locals = smaps_gpu[start:start+ntransf,...]
@@ -187,7 +187,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 					kdatamem *= weights_frame
 
 				devicectx.backward_execute(kdatamem, out=imagemem)
-				
+
 				if alpha is None:
 					if hasattr(images, 'device'):
 						if images.device == devicectx.device:
@@ -240,7 +240,7 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 			weights[start:end], 
 			alpha, devicectxs[devindex], calcnorm))
 		start = end
-	
+
 
 	normlist = []
 
@@ -259,7 +259,7 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 		return images_out
 	elif calcnorm:
 		return normlist
-	
+
 
 
 
@@ -290,7 +290,7 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 
 			if kdatas is not None:
 				kd = cp.array(kdatas[start:start+ntransf,...], copy=False)
-			
+
 			kdmem = cp.empty((ntransf,coords.shape[1]), dtype=images.dtype)
 
 			smem = img * smp[start:start+ntransf,...]
@@ -305,7 +305,7 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 				kdmem *= weights
 
 			devicectx.backward_execute(kdmem, out=smem)
-			
+
 			if alpha is None:
 				if hasattr(smaps, 'device'):
 					if smaps.device == devicectx.device:
@@ -322,12 +322,12 @@ async def device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, 
 						raise RuntimeError('smaps must reside on same device as devicectx or in cpu')
 				else:
 					smaps[start:start+ntransf,...] -= (alpha * cp.conj(img) * smem).get()
-                    
+
 
 		if alpha is None:
 			return smaps_out
 		elif calcnorm:
 			return norm
-		
+
 async def gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm=False):
 	return await device_gradient_step_s(smaps, images, coords, kdatas, weights, alpha, devicectx, calcnorm)
