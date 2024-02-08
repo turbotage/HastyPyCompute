@@ -197,9 +197,9 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 				a, [devicectx], calcnorm=False)
 		
 
-	proxx = prox.svtprox(base_alpha=1e-4, blk_shape=np.array([8, 8, 8]), blk_strides=np.array([8, 8, 8]), block_iter=2)
+	proxx = prox.svtprox(base_alpha=1e-5, blk_shape=np.array([16, 16, 16]), blk_strides=np.array([16, 16, 16]), block_iter=2)
 
-	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
+	await solvers.fista(np, image, alpha_i, gradx, proxx, niter)
 
 	# del ....
 	#cp.get_default_memory_pool().free_all_blocks()
@@ -212,9 +212,29 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 	del image, smaps, dataset
 
 
+async def test_svt(smapsPath, nframes=10):
+	# Load smaps and full image
+	smaps, image = load_data.load_smaps_image(smapsPath)
+
+	#dataset['weights'] = [np.sqrt(w) for w in dataset['weights']]
+
+
+	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
+	image = np.repeat(image, nframes, axis=0)
+
+	proxx = prox.svtprox(base_alpha=1e-5, blk_shape=np.array([16, 16, 16]), blk_strides=np.array([16, 16, 16]), block_iter=2)
+
+	import plot_utility as pu
+	image_c = image.copy()
+	await proxx(image_c, 1e-9, image_c.copy())
+
+	print('Hej')
+
+
 if __name__ == "__main__":
 	imsize = (256,256,256)
-	for i in range(30):
+	asyncio.run(test_svt('/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5', nframes=10))
+	for i in range(1):
 		print(f'Iteration number: {i}')
 		lambda_x = round(10**(random.uniform(0, -4)), 5)
 		lambda_s = round(10**(random.uniform(-2, -6)), 7)
@@ -225,4 +245,4 @@ if __name__ == "__main__":
 
 		sPath = '/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
 
-		asyncio.run(run_framed(niter=100, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize))
+		asyncio.run(run_framed(niter=10, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize))
