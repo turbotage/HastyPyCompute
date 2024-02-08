@@ -21,7 +21,6 @@ import grad
 import prox
 
 
-
 async def main():
 
 	imsize = (320,320,320)
