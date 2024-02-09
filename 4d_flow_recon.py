@@ -28,7 +28,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	if load_from_zero:
 		start = time.time()
-		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/COBRA191/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
+		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/Garpen/Ena/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
 		end = time.time()
 		print(f"Load Time={end - start} s")
 		
@@ -61,12 +61,12 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 			wd[:] /= maxval
 
 		start = time.time()
-		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/COBRA191/dataset.h5')
+		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset.h5')
 		end = time.time()
 		print(f"Save Dataset Time={end - start} s")
 	else:
 		start = time.time()
-		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/COBRA191/dataset.h5')
+		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset.h5')
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
 
@@ -83,13 +83,14 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 	#print('Save')
 	#with h5py.File(filename, 'w') as f:
 	#	f['smaps'] = smaps
+		
+		
 	
 
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
-
-	dataset['weights'] = [np.sqrt(w) for w in dataset['weights']]
+	#dataset['weights'] = [w**0.75 for w in dataset['weights']]
 
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
 
@@ -102,6 +103,11 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 			devicectx, 
 			iter=[5,[4,7]],
 			lamda=[lx, ls])
+	else:
+		async def inormal(imgnew):
+			return await grad.gradient_step_x(smaps, imgnew, [dataset['coords'][0]], None, [dataset['weights'][0]], None, [devicectx])
+
+		alpha_i = 0.25 / await solvers.max_eig(np, inormal, util.complex_rand(image[0,...][None,...].shape, xp=np), 8)
 
 
 	image = np.repeat(image, 5, axis=0)
@@ -114,13 +120,13 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	#proxx = prox.svtprox()
 
-	#await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
+	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 
 	# del ....
 	#cp.get_default_memory_pool().free_all_blocks()
 
 	#filename = f'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lx{lx:.5f}_ls{ls:.7f}_res{resids[-1]}.h5'
-	filename = '/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
+	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE.h5'
 	print('Save')
 	with h5py.File(filename, 'w') as f:
 		f.create_dataset('image', data=image)
@@ -134,7 +140,7 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 
 	if load_from_zero:
 		start = time.time()
-		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/COBRA191/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
+		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/Garpen/Ena/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
 		end = time.time()
 		print(f"Load Time={end - start} s")
 
@@ -167,12 +173,12 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 			wd[:] /= maxval
 
 		start = time.time()
-		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/COBRA191/dataset_framed.h5')
+		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset_framed.h5')
 		end = time.time()
 		print(f"Save Dataset Time={end - start} s")
 	else:
 		start = time.time()
-		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/COBRA191/dataset_framed.h5')
+		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset_framed.h5')
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
 
@@ -181,7 +187,7 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 	# Load smaps and full image
 	smaps, image = load_data.load_smaps_image(smapsPath)
 
-	#dataset['weights'] = [np.sqrt(w) for w in dataset['weights']]
+	#dataset['weights'] = [w**0.75 for w in dataset['weights']]
 
 
 	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
@@ -197,17 +203,17 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 				a, [devicectx], calcnorm=False)
 		
 
-	proxx = prox.svtprox(base_alpha=1e-5, blk_shape=np.array([16, 16, 16]), blk_strides=np.array([16, 16, 16]), block_iter=2)
+	proxx = prox.svtprox(base_alpha=1e-3, blk_shape=np.array([8, 8, 8]), blk_strides=np.array([8, 8, 8]), block_iter=2)
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, niter)
 
 	# del ....
 	#cp.get_default_memory_pool().free_all_blocks()
 
-	filename = f'/media/buntess/OtherSwifty/Data/COBRA191/reconed_framed{nframes}.h5'
+	filename = f'/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_framed{nframes}.h5'
 	print('Save')
 	with h5py.File(filename, 'w') as f:
-		f['image'] = image
+		f.create_dataset('image', data=image)
 
 	del image, smaps, dataset
 
@@ -233,7 +239,7 @@ async def test_svt(smapsPath, nframes=10):
 
 if __name__ == "__main__":
 	imsize = (256,256,256)
-	asyncio.run(test_svt('/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5', nframes=10))
+
 	for i in range(1):
 		print(f'Iteration number: {i}')
 		lambda_x = round(10**(random.uniform(0, -4)), 5)
@@ -243,6 +249,6 @@ if __name__ == "__main__":
 		
 		#cp.get_default_memory_pool().free_all_blocks()
 
-		sPath = '/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
+		sPath = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE.h5' #'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
 
 		asyncio.run(run_framed(niter=10, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize))
