@@ -130,7 +130,13 @@ class DeviceCtx:
 
 # Inputs shall be on CPU or GPU, computes x = x - alpha * S^HN^H(W(NSx-b)) or returns S^HN^HWN^HSx
 async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm = False):
-	with devicectx.device:
+	
+	if isinstance(devicectx, dict):
+		devicectx = DeviceCtx(devicectx["dev"], devicectx["ntransf"], devicectx["imsize"], devicectx["typehint"])
+
+	device = devicectx.device
+	
+	with device:
 		ncoils = smaps.shape[0]
 		numframes = images.shape[0]
 		ntransf = devicectx.ntransf
@@ -210,7 +216,7 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 		elif calcnorm:
 			return normlist
 
-async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list[DeviceCtx], calcnorm = False):
+async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectxs: list, calcnorm = False):
 	numframes = images.shape[0]
 
 	# This is how many equally distributed frames per device we have

@@ -5,6 +5,7 @@ import time
 import numpy as np
 import random
 import h5py
+from sigpy import dcf as dcf
 
 import util
 import gc
@@ -24,7 +25,7 @@ import prox
 
 
 
-async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = False):
+async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = False, pipeMenon = False, wexponent=0.75):
 
 	if load_from_zero:
 		start = time.time()
@@ -84,15 +85,24 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 	#with h5py.File(filename, 'w') as f:
 	#	f['smaps'] = smaps
 		
-		
+	dataset['weights'] = [(w / w.max()) for w in dataset['weights']]
 	
 
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
 									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
 
-	#dataset['weights'] = [w**0.75 for w in dataset['weights']]
+	if pipeMenon:
+		for i in range(len(dataset['weights'])):
+			print(f'Pipe Menon Frame {i}')
+			w = dcf.pipe_menon_dcf(dataset['coords'][i]/np.pi*imsize[0]/2, imsize)
+			dataset['weights'][i] = (w / w.max()) ** wexponent
+		
+	else:
+		dataset['weights'] = [(w / w.max())**wexponent for w in dataset['weights']]
 
-	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
+	#devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
+
+	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 2, "imsize": imsize, "typehint": "full"}
 
 	do_isense = False
 	if do_isense:
@@ -100,12 +110,12 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 			cp.array(dataset['coords'][0]), 
 			cp.array(dataset['kdatas'][0]), 
 			cp.array(dataset['weights'][0]),
-			devicectx, 
+			devicectxdict, 
 			iter=[5,[4,7]],
 			lamda=[lx, ls])
 	else:
 		async def inormal(imgnew):
-			return await grad.gradient_step_x(smaps, imgnew, [dataset['coords'][0]], None, [dataset['weights'][0]], None, [devicectx])
+			return await grad.gradient_step_x(smaps, imgnew, [dataset['coords'][0]], None, [dataset['weights'][0]], None, [devicectxdict])
 
 		alpha_i = 0.25 / await solvers.max_eig(np, inormal, util.complex_rand(image[0,...][None,...].shape, xp=np), 8)
 
@@ -114,7 +124,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	async def gradx(ximg, a):
 		await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
-				a, [devicectx], calcnorm=False)
+				a, [devicectxdict], calcnorm=False)
 		
 	proxx = prox.dctprox(lx)
 
@@ -122,11 +132,17 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 
+	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_1.h5'
+	print('Save')
+	with h5py.File(filename, 'w') as f:
+		f.create_dataset('image', data=image)
+		f.create_dataset('smaps', data=smaps)
 	# del ....
-	#cp.get_default_memory_pool().free_all_blocks()
+	cp.get_default_memory_pool().free_all_blocks()
 
+	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 	#filename = f'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lx{lx:.5f}_ls{ls:.7f}_res{resids[-1]}.h5'
-	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE.h5'
+	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_2.h5'
 	print('Save')
 	with h5py.File(filename, 'w') as f:
 		f.create_dataset('image', data=image)
@@ -135,7 +151,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 	del image, smaps, dataset
 
 
-async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (320,320,320)):
+async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (320,320,320), pipeMenon = False, wexponent=0.75, lambda_n=1e-3):
 	
 
 	if load_from_zero:
@@ -187,33 +203,49 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 	# Load smaps and full image
 	smaps, image = load_data.load_smaps_image(smapsPath)
 
-	#dataset['weights'] = [w**0.75 for w in dataset['weights']]
+	if pipeMenon:
+		for i in range(len(dataset['weights'])):
+			print(f'Pipe Menon Frame {i}')
+			w = dcf.pipe_menon_dcf(dataset['coords'][i]/np.pi*imsize[0]/2, imsize)
+			dataset['weights'][i] = (w / w.max()) ** wexponent
+		
+	else:
+		dataset['weights'] = [(w / w.max())**wexponent for w in dataset['weights']]
 
 
-	devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
+	#devicectx = grad.DeviceCtx(cp.cuda.Device(0), 2, imsize, "full")
+	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 2, "imsize": imsize, "typehint": "full"}
+	
 	image = np.repeat(image, nframes, axis=0)
 
 	async def inormal(imgnew):
-		return await grad.gradient_step_x(smaps, imgnew, [dataset['coords'][0]], None, [dataset['weights'][0]], None, [devicectx])
+		return await grad.gradient_step_x(smaps, imgnew, [dataset['coords'][0]], None, [dataset['weights'][0]], None, [devicectxdict])
 
 	alpha_i = 0.25 / await solvers.max_eig(np, inormal, util.complex_rand(image[0,...][None,...].shape, xp=np), 8)
 
 	async def gradx(ximg, a):
-		await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
-				a, [devicectx], calcnorm=False)
+		normlist = await grad.gradient_step_x(smaps, ximg, dataset['coords'], dataset['kdatas'], dataset['weights'],
+				a, [devicectxdict], calcnorm=True)
+		
+		print(f'Error = {np.array([a.item() for a in normlist[0]]).sum()}')
 		
 
-	proxx = prox.svtprox(base_alpha=1e-3, blk_shape=np.array([8, 8, 8]), blk_strides=np.array([8, 8, 8]), block_iter=2)
+	proxx = prox.svtprox(base_alpha=lambda_n, blk_shape=np.array([8, 8, 8]), blk_strides=np.array([8, 8, 8]), block_iter=2)
 
-	await solvers.fista(np, image, alpha_i, gradx, proxx, niter)
 
+
+	filename = f'/media/buntess/OtherSwifty/Data/Garpen/Ena/long_run/reconed_framed{nframes}_wexp{wexponent:.2f}_{lambda_n:.6f}_'
+	await solvers.fista(np, image, alpha_i, gradx, proxx, 100, saveImage=True, fileName=filename)
+	cp.get_default_memory_pool().free_all_blocks()
+
+	
 	# del ....
 	#cp.get_default_memory_pool().free_all_blocks()
 
-	filename = f'/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_framed{nframes}.h5'
-	print('Save')
-	with h5py.File(filename, 'w') as f:
-		f.create_dataset('image', data=image)
+	#filename = f'/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_framed{nframes}.h5'
+	#print('Save')
+	#with h5py.File(filename, 'w') as f:
+		#f.create_dataset('image', data=image)
 
 	del image, smaps, dataset
 
@@ -239,16 +271,27 @@ async def test_svt(smapsPath, nframes=10):
 
 if __name__ == "__main__":
 	imsize = (256,256,256)
+	usePipeMenon = True
 
-	for i in range(1):
-		print(f'Iteration number: {i}')
-		lambda_x = round(10**(random.uniform(0, -4)), 5)
-		lambda_s = round(10**(random.uniform(-2, -6)), 7)
+	lambda_x = 0.05 #round(10**(random.uniform(0, -4)), 5)
+	lambda_s = round(10**(random.uniform(-2, -6)), 7)
 
-		#asyncio.run(get_smaps(lambda_x, lambda_s, imsize, False))
+	#asyncio.run(get_smaps(lambda_x, lambda_s, imsize, False, pipeMenon=usePipeMenon, wexponent=0.5))
+
+	wexponent = [0.6, 1]
+	lambda_n = [1e-4, 1e-2, 1e-6]
+
+	i = 1
+	for wexp in wexponent:
 		
-		#cp.get_default_memory_pool().free_all_blocks()
+		for l in lambda_n:
+		
+			print(f'Iteration number: {i}')
+			
+			
+			cp.get_default_memory_pool().free_all_blocks()
 
-		sPath = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE.h5' #'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
+			sPath = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_2.h5' #'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
 
-		asyncio.run(run_framed(niter=10, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize))
+			asyncio.run(run_framed(niter=100, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize, pipeMenon=usePipeMenon, wexponent=wexp, lambda_n=l))
+			i += 1

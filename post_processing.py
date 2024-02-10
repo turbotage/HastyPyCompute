@@ -179,8 +179,8 @@ class PostP_4DFlow:
 
 if __name__ == "__main__":
 
-	base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_framed20.h5'
-	#base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE.h5'
+	base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/long_run/reconed_framed20_wexp0.60_0.010000_3.h5'
+	#base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_2.h5'
 	venc = 1100
 
 	print(f'Loading Image')

@@ -116,7 +116,6 @@ def spatial_block_fetcher_3d_numba(input, shifts, br, Sr, bshape, bstrides, dir)
 	elif dir == 'z':
 		large_block = np.empty((bx * by * bz, bshape[0]*bshape[1], bshape[2]), dtype=np.complex64)
 
-	block_counter = 0
 	for nx in range(bx):
 		sx = nx * bstrides[0] + shifts[0]
 		ex = sx + bshape[0]
@@ -130,6 +129,7 @@ def spatial_block_fetcher_3d_numba(input, shifts, br, Sr, bshape, bstrides, dir)
 				ez = sz + bshape[2]
 
 				dircount = 0
+				block_counter = nx*by*bz + ny*bz + nz
 				if dir == 'x':
 					for x in range(sx, ex):
 						count = 0
@@ -155,7 +155,6 @@ def spatial_block_fetcher_3d_numba(input, shifts, br, Sr, bshape, bstrides, dir)
 								count += 1
 						dircount += 1
 
-				block_counter += 1
 
 	return large_block
 
@@ -169,7 +168,6 @@ def spatial_block_pusher_3d_numba(output, large_block, shifts, br, Sr, bshape, b
 	Sy = Sr[1]
 	Sz = Sr[2]
 
-	block_counter = 0
 	for nx in range(bx):
 		sx = nx * bstrides[0] + shifts[0]
 		ex = sx + bshape[0]
@@ -183,6 +181,7 @@ def spatial_block_pusher_3d_numba(output, large_block, shifts, br, Sr, bshape, b
 				ez = sz + bshape[2]
 
 				dircount = 0
+				block_counter = nx*by*bz + ny*bz + nz
 				# Pushes x block
 				if dir == 'x':
 					for x in range(sx, ex):
@@ -208,8 +207,6 @@ def spatial_block_pusher_3d_numba(output, large_block, shifts, br, Sr, bshape, b
 								output[x % Sx, y % Sy, z % Sz] += scale*large_block[block_counter, count, dircount]
 								count += 1
 						dircount += 1
-
-				block_counter += 1
 
 
 
@@ -262,15 +259,15 @@ async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_
 	executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
 
 	def fetch_and_thresh(iter):
-		start = time.time()
+		#start = time.time()
 		large_block =  block_fetcher_3d_numba(input, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames)
-		end = time.time()
-		print(f"Fetcher Time = {end - start}")
+		#end = time.time()
+		#print(f"Fetcher Time = {end - start}")
 
-		start = time.time()
+		#start = time.time()
 		large_block = thresh_blocks(large_block, lamda, 50)
-		end = time.time()
-		print(f"SoftThresh Time = {end - start}")
+		#end = time.time()
+		#print(f"SoftThresh Time = {end - start}")
 
 		return large_block
 
@@ -282,10 +279,10 @@ async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_
 		
 		large_block = await futures[iter]
 
-		start = time.time()
+		#start = time.time()
 		block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames, scale)
-		end = time.time()
-		print(f"Pusher Time = {end - start}")
+		#end = time.time()
+		#print(f"Pusher Time = {end - start}")
 
 
 	return output
