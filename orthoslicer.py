@@ -565,7 +565,7 @@ def image_nd(img):
 	if img.ndim == 4:
 		img = img[None,...]
 	
-	dataf = np.flip(data.transpose((2,3,4,0,1)), axis=2)
+	dataf = np.flip(img.transpose((2,3,4,0,1)), axis=2)
 	slicer = HastyOrthoSlicer(dataf)
 	slicer.show()
 
