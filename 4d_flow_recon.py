@@ -23,13 +23,14 @@ import grad
 
 import prox
 
-
+#base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/'
+base_path = '/home/turbotage/Documents/4DRecon/'
 
 async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = False, pipeMenon = False, wexponent=0.75):
 
 	if load_from_zero:
 		start = time.time()
-		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/Garpen/Ena/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
+		dataset = await load_data.load_flow_data(base_path + 'MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
 		end = time.time()
 		print(f"Load Time={end - start} s")
 		
@@ -62,12 +63,12 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 			wd[:] /= maxval
 
 		start = time.time()
-		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset.h5')
+		load_data.save_processed_dataset(dataset, base_path + 'dataset.h5')
 		end = time.time()
 		print(f"Save Dataset Time={end - start} s")
 	else:
 		start = time.time()
-		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset.h5')
+		dataset = load_data.load_processed_dataset(base_path + 'dataset.h5')
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
 
@@ -132,7 +133,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 
-	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_1.h5'
+	filename = base_path + 'reconed_iSENSE_1.h5'
 	print('Save')
 	with h5py.File(filename, 'w') as f:
 		f.create_dataset('image', data=image)
@@ -142,7 +143,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 15)
 	#filename = f'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lx{lx:.5f}_ls{ls:.7f}_res{resids[-1]}.h5'
-	filename = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_2.h5'
+	filename = base_path + 'reconed_iSENSE_2.h5'
 	print('Save')
 	with h5py.File(filename, 'w') as f:
 		f.create_dataset('image', data=image)
@@ -156,7 +157,7 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 
 	if load_from_zero:
 		start = time.time()
-		dataset = await load_data.load_flow_data('/media/buntess/OtherSwifty/Data/Garpen/Ena/MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
+		dataset = await load_data.load_flow_data(base_path + 'MRI_Raw.h5', gating_names=['TIME_E0', 'ECG_E0'])
 		end = time.time()
 		print(f"Load Time={end - start} s")
 
@@ -189,12 +190,12 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 			wd[:] /= maxval
 
 		start = time.time()
-		load_data.save_processed_dataset(dataset, '/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset_framed.h5')
+		load_data.save_processed_dataset(dataset, base_path + 'dataset_framed.h5')
 		end = time.time()
 		print(f"Save Dataset Time={end - start} s")
 	else:
 		start = time.time()
-		dataset = load_data.load_processed_dataset('/media/buntess/OtherSwifty/Data/Garpen/Ena/dataset_framed.h5')
+		dataset = load_data.load_processed_dataset(base_path + 'dataset_framed.h5')
 		end = time.time()
 		print(f"Load Dataset Time={end - start} s")
 
@@ -234,7 +235,7 @@ async def run_framed(niter, nframes, smapsPath, load_from_zero=True, imsize = (3
 
 
 
-	filename = f'/media/buntess/OtherSwifty/Data/Garpen/Ena/long_run/reconed_framed{nframes}_wexp{wexponent:.2f}_{lambda_n:.6f}_'
+	filename = base_path + f'reconed_framed{nframes}_wexp{wexponent:.2f}_{lambda_n:.6f}_'
 	await solvers.fista(np, image, alpha_i, gradx, proxx, 100, saveImage=True, fileName=filename)
 	cp.get_default_memory_pool().free_all_blocks()
 
@@ -276,7 +277,7 @@ if __name__ == "__main__":
 	lambda_x = 0.05 #round(10**(random.uniform(0, -4)), 5)
 	lambda_s = round(10**(random.uniform(-2, -6)), 7)
 
-	#asyncio.run(get_smaps(lambda_x, lambda_s, imsize, False, pipeMenon=usePipeMenon, wexponent=0.5))
+	#asyncio.run(get_smaps(lambda_x, lambda_s, imsize, True, pipeMenon=usePipeMenon, wexponent=0.5))
 
 	wexponent = [0.6, 1]
 	lambda_n = [1e-4, 1e-2, 1e-6]
@@ -288,10 +289,9 @@ if __name__ == "__main__":
 		
 			print(f'Iteration number: {i}')
 			
-			
 			cp.get_default_memory_pool().free_all_blocks()
 
-			sPath = '/media/buntess/OtherSwifty/Data/Garpen/Ena/reconed_iSENSE_2.h5' #'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
+			sPath = base_path + 'reconed_iSENSE_2.h5' #'/media/buntess/OtherSwifty/Data/COBRA191/reconed_lowres.h5'
 
-			asyncio.run(run_framed(niter=100, nframes=20, smapsPath=sPath, load_from_zero=False, imsize=imsize, pipeMenon=usePipeMenon, wexponent=wexp, lambda_n=l))
+			asyncio.run(run_framed(niter=100, nframes=20, smapsPath=sPath, load_from_zero=False if i != 1 else True, imsize=imsize, pipeMenon=usePipeMenon, wexponent=wexp, lambda_n=l))
 			i += 1

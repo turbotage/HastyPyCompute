@@ -16,9 +16,12 @@ async def fista(xp, x, alpha, gradstep, prox, maxiter, saveImage = False, fileNa
         xp.copyto(x_old, x)
         xp.copyto(x, z)
 
+        print('beginning gradstep')
         ret = await gradstep(x, alpha)
-
+        print('gradstep finished')
+        print('beginning prox')
         await prox(x, alpha, z)
+        print('prox finished')
 
         t_old = t
         t[:] = 0.5 * (1.0 + math.sqrt(1.0 + 4.0*t_old*t_old))

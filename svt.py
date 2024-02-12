@@ -254,9 +254,9 @@ async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_
 		for biter in range(block_iter):
 			shifts[d,biter] = np.random.randint(blk_shape[d])
 
-	lock = asyncio.Lock()
-	loop = asyncio.get_event_loop()
-	executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
+	#lock = asyncio.Lock()
+	#loop = asyncio.get_event_loop()
+	#executor = concurrent.futures.ThreadPoolExecutor(max_workers=(block_iter))
 
 	def fetch_and_thresh(iter):
 		#start = time.time()
@@ -271,15 +271,16 @@ async def my_svt3(output, input, lamda, blk_shape, blk_strides, block_iter, num_
 
 		return large_block
 
-	futures = []
-	for iter in range(block_iter):
-		futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter))
+	#futures = []
+	#for iter in range(block_iter):
+	#	futures.append(loop.run_in_executor(executor, fetch_and_thresh, iter))
 
 	for iter in range(block_iter):
 		
-		large_block = await futures[iter]
+		#large_block = await futures[iter]
 
 		#start = time.time()
+		large_block = fetch_and_thresh(iter)
 		block_pusher_3d_numba(output, large_block, iter, shifts, br, Sr, blk_shape, blk_strides, num_encodes, num_frames, scale)
 		#end = time.time()
 		#print(f"Pusher Time = {end - start}")
