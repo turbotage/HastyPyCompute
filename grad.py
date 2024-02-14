@@ -42,7 +42,7 @@ class DeviceCtx:
 				self.forward_plan = None
 			else:
 				self.forward_plan = cufinufft.Plan(nufft_type=2, n_modes=imshape, 
-				n_trans=ntransf, eps=1e-4, dtype="complex64",
+				n_trans=ntransf, eps=1e-5, dtype="complex64",
 				gpu_device_id=device.id)
 		else:
 			self.forward_plan = forward_plan
@@ -62,7 +62,7 @@ class DeviceCtx:
 				self.backward_plan = None
 			else:
 				self.backward_plan = cufinufft.Plan(nufft_type=1, n_modes=imshape,
-				n_trans=ntransf, eps=1e-4, dtype="complex64", upsampfac=2.0,
+				n_trans=ntransf, eps=1e-5, dtype="complex64", upsampfac=2.0,
 				gpu_method=2,
 				gpu_device_id=device.id)
 		else:
@@ -132,7 +132,7 @@ class DeviceCtx:
 async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicectx: DeviceCtx, calcnorm = False):
 	
 	if isinstance(devicectx, dict):
-		devicectx = DeviceCtx(devicectx["dev"], devicectx["ntransf"], devicectx["imsize"], devicectx["typehint"])
+		devicectx = DeviceCtx(devicectx["dev"], devicectx["ntransf"], devicectx["imsize"], "" if not "typehint" in devicectx else devicectx["typehint"])
 
 	device = devicectx.device
 	

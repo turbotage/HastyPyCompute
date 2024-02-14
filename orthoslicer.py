@@ -223,7 +223,7 @@ class HastyOrthoSlicer:
 		for f in self._figs:
 			plt.close(f)
 
-	def _cleanup(self):
+	def _cleanup(self, kwargs):
 		"""Clean up before closing"""
 		self._closed = True
 		for link in list(self._links):  # make a copy before iterating
@@ -523,6 +523,8 @@ class HastyOrthoSlicer:
 			self._mask_mode = False
 
 	def _on_text_submit(self, text):
+		if text == '':
+			return
 		if text == 'phaseimg':
 			if not self._is_complex_dtype:
 				return

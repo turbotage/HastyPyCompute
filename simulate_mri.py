@@ -5,6 +5,8 @@ import cupy as cp
 import cufinufft
 
 import plot_utility as pu
+import orthoslicer as ort
+
 import image_creation as ic
 
 import math
@@ -13,192 +15,79 @@ import os
 import fnmatch
 import re
 
-
 def rename_h5(name, appending):
 	return name[:-3] + appending + '.h5'
 
 def crop_image(dirpath, imagefile, create_crop_image=False, load_crop_image=False, just_plot=False, also_plot=False):
 	map_joiner = lambda path: os.path.join(dirpath, path)
 
-	img = np.array([0])
-	img_mag = np.array([0])
-	smaps = np.array([0])
-
 	if create_crop_image and load_crop_image:
 		raise RuntimeError('Can not both load and create crop images')
 
 	if create_crop_image:
 		print('Loading images')
-		with h5py.File(map_joiner(rename_h5(imagefile, '_mvel')), "r") as f:
-			img = f['images'][()]
-			#img = np.transpose(img, axes=(4,3,2,1,0))
-
-		print('Loading magnitude')
-		with h5py.File(map_joiner(rename_h5(imagefile, '_mag')), "r") as f:
-			img_mag = f['images'][()]
-			#img_mag = np.transpose(img_mag, (2,1,0))
-
-		if True:
-			smap_list = []
-			print('Loading sense')
-			with h5py.File(map_joiner('my_smaps.h5'), "r") as hf:
-				smaps = hf['Maps'][()]
-				#maps_base = hf['Maps']
-				#maps_key_base = 'SenseMaps_'
-				#for i in range(len(list(maps_base))):
-				#	smap = maps_base[maps_key_base + str(i)][()]
-				#	smap = smap['real'] + 1j*smap['imag']
-				#	smap_list.append(smap)
-
-			#smaps = np.stack(smap_list, axis=0)
-
+		with h5py.File(map_joiner(imagefile), "r") as f:
+			img = f['corrected_img'][()]
+			cd = f['cd'][()]
+			smaps = f['smaps'][()]
+			
 		nlen = 64
 		nx = 110
 		ny = 70
 		nz = 130 #45
 		crop_box = [(nx,nx+nlen),(ny,ny+nlen),(nz,nz+nlen)]
 		print('Cropping')
-		new_img = ic.crop_5d_3d(img, crop_box).astype(np.float32)
-		new_img_mag = ic.crop_3d_3d(img_mag, crop_box).astype(np.float32)
-		new_smaps = ic.crop_4d_3d(smaps, crop_box).astype(np.complex64)
+		new_img = ic.crop_5d_3d(img, crop_box)
+		new_cd = ic.crop_4d_3d(cd, crop_box).astype(np.float32)
+		new_smaps = ic.crop_4d_3d(smaps, crop_box)
 
 		if just_plot or also_plot:
-			pu.image_nd(new_img)
-			#pu.image_nd(np.sqrt(new_img[:,1,...]**2 + new_img[:,2,...]**2 + new_img[:,3,...]**2))
-			cd = ic.get_CD(new_img)
-			pu.image_nd(cd)
-			#pu.image_nd(new_smaps)
-			#pu.image_nd(img_mag)
+			ort.image_nd(new_img)
+			ort.image_nd(new_cd)
 			
 			if just_plot:
-				return (None, None, None)
+				return (None, None)
 
 		print('Writing cropped images')
 		with h5py.File(map_joiner(rename_h5(imagefile, '_cropped')), "w") as f:
-			f.create_dataset('images', data=new_img)
-
-		print('Writing cropped mags')
-		with h5py.File(map_joiner(rename_h5(imagefile, '_mag_cropped')), "w") as f:
-			f.create_dataset('images', data=new_img_mag)
-
-		print('Writing cropped sensemaps')
-		with h5py.File(map_joiner('SenseMapsCpp_cropped.h5'), "w") as f:
-			f.create_dataset('Maps', data=new_smaps)
+			f.create_dataset('img', data=new_img)
+			f.create_dataset('smaps', data=new_smaps)
 
 		img = new_img
-		img_mag = new_img_mag
 		smaps = new_smaps
 		print('\nCreated cropped images\n')
 	elif load_crop_image:
 		print('Loading cropped images')
 		with h5py.File(map_joiner(rename_h5(imagefile, '_cropped')), "r") as f:
-			img = f['images'][()]
-		print('Loading cropped mags')
-		with h5py.File(map_joiner(rename_h5(imagefile, '_mag_cropped')), "r") as f:
-			img_mag = f['images'][()]
-		print('Loading cropped sensemaps')
-		with h5py.File(map_joiner('SenseMapsCpp_cropped.h5'), "r") as f:
-			smaps = f['Maps'][()]
+			img = f['img'][()]
+			smaps = f['smaps'][()]
 		print('\nLoaded cropped images\n')
 
-	return img, img_mag, smaps
-
-def enc_image(img, img_mag, out_images, dirpath, imagefile, 
-	create_enc_image=False, load_enc_image=False, also_plot=False):
-	
-	map_joiner = lambda path: os.path.join(dirpath, path)
-
-	if create_enc_image and load_enc_image:
-		raise RuntimeError('Can not both load and create enc images')
-
-	img_enc = np.array([0])
-	img_mvel = np.array([0])
-
-	if create_enc_image:
-		old_img = img
-
-		#img[:,0,...] *= (2.0 * np.expand_dims(img_mag, axis=0) / np.max(img_mag, axis=(0,1,2)))
-
-		
-		if img.shape[0] != out_images:
-			print('Interpolating')
-			img = np.real(ic.interpolate_images(img, out_images).astype(np.complex64)).astype(np.float32)
-
-		with h5py.File(map_joiner('images_mvel_' + str(out_images) + 'f_cropped_interpolated.h5'), "w") as f:
-			f.create_dataset('images', data=img)
-		img_mvel = img
-
-		v_enc = 1.0
-		A = (np.pi/(v_enc*np.sqrt(3))) * np.array(
-			[
-			[ 0,  0,  0],
-			[-1, -1, -1],
-			[ 1,  1, -1],
-			[ 1, -1,  1],
-			[-1,  1,  1]
-			], dtype=np.float32)
-
-		imvel = np.expand_dims(np.transpose(img[:,1:], axes=(2,3,4,0,1)), axis=-1)
-		imvel /= (0.25*np.max(imvel))
+	return img, smaps
 
 
-		#imvel = np.sign(imvel) * (imvel ** 3)
-		#max_vel = np.max(imvel)
-		#imvel /= max_vel
-		#imvel *= (v_enc / np.sqrt(3))
-
-		#if also_plot:
-			#pu.image_nd(np.sqrt(imvel[...,0,0]**2 + imvel[...,1,0]**2 + imvel[...,2,0]**2))
-
-		print('Applying encoding matrix')
-		imenc = (A @ imvel).squeeze(-1)
-		imenc = np.transpose(imenc, axes=(3,4,0,1,2))
-
-		imenc = (np.expand_dims(img[:,0], axis=1) * (np.cos(imenc) + 1j*np.sin(imenc))).astype(np.complex64)
-
-		if also_plot:
-			pu.image_nd(imenc)
-
-		print('Writing interpolated encoded')
-		with h5py.File(map_joiner('images_encs_' + str(out_images) + 'f_cropped_interpolated.h5'), "w") as f:
-			f.create_dataset('images', data=imenc)
-
-		img_enc = imenc
-
-		print('\nCreated encoded images\n')
-	elif load_enc_image:
-		print('Loading mvel')
-		with h5py.File(map_joiner('images_mvel_' + str(out_images) + 'f_cropped_interpolated.h5'), "r") as f:
-			img_mvel = f['images'][()]
-		print('Loading encs')
-		with h5py.File(map_joiner('images_encs_' + str(out_images) + 'f_cropped_interpolated.h5'), "r") as f:
-			img_enc = f['images'][()]
-		print('\nLoaded encoded images\n')
-
-	return img_enc, img_mvel
-
-def nufft_of_enced_image(img_enc, smaps, dirpath, 
+def nufft_of_enced_image(img, smaps, dirpath, 
 	nspokes, nsamp_per_spoke, method, crop_factor=1.0,
-	create_nufft_of_enced_image=False, load_nufft_of_neced_image=False, also_plot=False):
+	create_kdata=False, load_kdata=False, also_plot=False):
 	
 	nfreq = nspokes * nsamp_per_spoke
 	map_joiner = lambda path: os.path.join(dirpath, path)
 
-	if create_nufft_of_enced_image and load_nufft_of_neced_image:
+	if create_kdata and load_kdata:
 		raise RuntimeError('Can not both load and create nufft_of_enced_image images')
 
 	frame_coords = []
 	frame_kdatas = []
 
-	if create_nufft_of_enced_image:
-		nframes = img_enc.shape[0]
-		nenc = img_enc.shape[1]
+	if create_kdata:
+		nframes = img.shape[0]
+		nenc = img.shape[1]
 		nsmaps = smaps.shape[0]
 
 		#coords = np.empty((nframes,nenc,3,nfreq), dtype=np.float32)
 		#kdatas = np.empty((nframes,nenc,nsmaps,nfreq), dtype=np.complex64)
 
-		im_size = (img_enc.shape[2], img_enc.shape[3], img_enc.shape[4])
+		im_size = (img.shape[2], img.shape[3], img.shape[4])
 		num_voxels = math.prod(list(im_size))
 
 		print('Simulating MRI camera')
@@ -211,15 +100,15 @@ def nufft_of_enced_image(img_enc, smaps, dirpath,
 			xangles = np.pi * np.random.rand(nspokes).astype(np.float32)
 			zangles = 2 * np.pi * np.random.rand(nspokes).astype(np.float32)
 
+			coord = np.ascontiguousarray(ic.create_coords(nspokes, nsamp_per_spoke, im_size, method, False, crop_factor, xangles, zangles))
+
+			if also_plot and frame == 0:
+				pu.scatter_3d(coord)
+
 			for encode in range(nenc):
 				print('Encode: ', encode, '/', nenc, '  Creating coordinates')
 
 				coil_kdatas = []
-
-				coord = np.ascontiguousarray(ic.create_coords(nspokes, nsamp_per_spoke, im_size, method, False, crop_factor, xangles, zangles))
-
-				if also_plot:
-					pu.scatter_3d(coord)
 
 				coord = cp.array(coord)
 
@@ -227,14 +116,16 @@ def nufft_of_enced_image(img_enc, smaps, dirpath,
 
 				for smap in range(nsmaps):
 					print('\r Coil: ', smap, '/', nsmaps, end="")
-					coiled_image = cp.array(img_enc[frame,encode,...] * smaps[smap,...])
-					cufinufft.nufft3d1(x=coord[0,:], y=coord[1,:], z=coord[2,:], data=coiled_image, out=outkdata)
+					coiled_image = cp.array(img[frame,encode,...] * smaps[smap,...])
+					cufinufft.nufft3d2(x=coord[0,:], y=coord[1,:], z=coord[2,:], data=coiled_image, 
+						out=outkdata)
+					outkdata /= np.sqrt(coiled_image.size)
 
 					coil_kdatas.append(outkdata.copy())
 				print("")
 
-				encode_coords.append(coord)
-				encode_kdatas.append(np.stack(coil_kdatas, axis=0))
+				encode_coords.append(coord.get())
+				encode_kdatas.append(cp.stack(coil_kdatas, axis=0).get())
 
 			frame_coords.append(encode_coords)
 			frame_kdatas.append(encode_kdatas)
@@ -247,7 +138,7 @@ def nufft_of_enced_image(img_enc, smaps, dirpath,
 					f.create_dataset('kdatas_f'+ijstr, data=frame_kdatas[i][j])
 
 		print('\nCreated coords and kdatas\n')
-	elif load_nufft_of_neced_image:
+	elif load_kdata:
 		frame_coords = np.array([], dtype=object)
 		frame_kdatas = np.array([], dtype=object)
 		with h5py.File(map_joiner('simulated_coords_kdatas.h5'), "r") as f:
@@ -264,8 +155,7 @@ def nufft_of_enced_image(img_enc, smaps, dirpath,
 
 def simulate(dirpath='D:\\4DRecon\\dat\\dat2', imagefile='images_6f.h5',
 		create_crop_image=False, load_crop_image=False, 
-		create_enc_image=False, load_enc_image=False,
-		create_nufft_of_enced_image=False, load_nufft_of_neced_image=False,
+		create_kdata=False, load_kdata=False,
 		nimgout=20,
 		nspokes=500,
 		samp_per_spoke=489,
@@ -274,20 +164,16 @@ def simulate(dirpath='D:\\4DRecon\\dat\\dat2', imagefile='images_6f.h5',
 		just_plot=False,
 		also_plot=False):
 
-	img, img_mag, smaps = crop_image(dirpath, imagefile, create_crop_image, load_crop_image, just_plot, also_plot)
+	img, smaps = crop_image(dirpath, imagefile, create_crop_image, load_crop_image, just_plot, also_plot)
 
 	if just_plot:
-		return
+		return #ort.image_nd(img)
 
-	img_enc, img_mvel = enc_image(img, img_mag, nimgout, dirpath, imagefile, create_enc_image, load_enc_image, also_plot)
-
-	if also_plot:
-		pu.image_nd(img_enc)
-		pu.image_nd(ic.get_CD(img_mvel))
-
-	coords, kdatas = nufft_of_enced_image(img_enc, smaps, dirpath, 
+	coords, kdatas = nufft_of_enced_image(img, smaps, dirpath, 
 		nspokes, samp_per_spoke, method, crop_factor,
-		create_nufft_of_enced_image, load_nufft_of_neced_image, also_plot)
+		create_kdata, load_kdata, also_plot)
+	
+	return coords, kdatas
 	
 	
 
@@ -327,7 +213,13 @@ def load_coords_kdatas(dirpath):
 
 def load_smaps(dirpath):
 	map_joiner = lambda path: os.path.join(dirpath, path)
-	smaps = np.array([])
-	with h5py.File(map_joiner('SenseMapsCpp_cropped.h5'), "r") as f:
-		smaps = f['Maps'][()]
+	with h5py.File(map_joiner('background_corrected_cropped.h5'), "r") as f:
+		smaps = f['smaps'][()]
 	return smaps
+
+def load_true_and_smaps(dirpath):
+	map_joiner = lambda path: os.path.join(dirpath, path)
+	with h5py.File(map_joiner('background_corrected_cropped.h5'), "r") as f:
+		true_image = f['img'][()]
+		smaps = f['smaps'][()]
+	return true_image, smaps
