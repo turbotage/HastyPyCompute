@@ -183,7 +183,11 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 
 				imagemem = locals * image_frame
 
+				cp.cuda.get_current_stream().synchronize()
+
 				devicectx.forward_execute(imagemem, out=kdatamem)
+
+				cp.cuda.get_current_stream().synchronize()
 
 				if kdatas is not None:
 					kdatamem = weights_and_kdata_func(kdatamem, kdata_frame, weights_frame)
@@ -192,7 +196,11 @@ async def device_gradient_step_x(smaps, images, coords, kdatas, weights, alpha, 
 				else:
 					kdatamem *= weights_frame
 
+				cp.cuda.get_current_stream().synchronize()
+
 				devicectx.backward_execute(kdatamem, out=imagemem)
+
+				cp.cuda.get_current_stream().synchronize()
 
 				if alpha is None:
 					if hasattr(images, 'device'):
@@ -228,38 +236,59 @@ async def gradient_step_x(smaps, images, coords, kdatas, weights, alpha, devicec
 		devindex = i % len(devicectxs)
 		frames_per_device[devindex] += 1
 
-	loop = asyncio.get_event_loop()
-	executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(devicectxs))
+	#loop = asyncio.get_event_loop()
+	#executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(devicectxs))
 
 	if alpha is None:
 		images_out = images.copy()
 
-	futures = []
+	normlist = []
 	start = 0
 	for devindex, fpd in enumerate(frames_per_device):
 		end = start + fpd
-		futures.append(loop.run_in_executor(executor, device_gradient_step_x,
+		ret = await device_gradient_step_x(
 			smaps, 
 			images[start:end,...], 
 			coords[start:end], 
 			None if kdatas is None else kdatas[start:end], 
 			weights[start:end], 
-			alpha, devicectxs[devindex], calcnorm))
-		start = end
-
-
-	normlist = []
-
-	start = 0
-	for i, fut in enumerate(futures):
+			alpha, devicectxs[devindex], calcnorm)
+		
 		if alpha is None:
-			end = start + frames_per_device[i]
-			images_out[start:end] = await (await fut)
+			end = start + frames_per_device[devindex]
+			images_out[start:end] = ret
 			start = end
 		elif calcnorm:
-			normlist.append(await (await fut))
-		else:
-			await (await fut)
+			normlist.append(ret)
+
+		start = end
+
+	# futures = []
+	# start = 0
+	# for devindex, fpd in enumerate(frames_per_device):
+	# 	end = start + fpd
+	# 	futures.append(loop.run_in_executor(executor, device_gradient_step_x,
+	# 		smaps, 
+	# 		images[start:end,...], 
+	# 		coords[start:end], 
+	# 		None if kdatas is None else kdatas[start:end], 
+	# 		weights[start:end], 
+	# 		alpha, devicectxs[devindex], calcnorm))
+	# 	start = end
+
+
+	# normlist = []
+
+	# start = 0
+	# for i, fut in enumerate(futures):
+	# 	if alpha is None:
+	# 		end = start + frames_per_device[i]
+	# 		images_out[start:end] = await (await fut)
+	# 		start = end
+	# 	elif calcnorm:
+	# 		normlist.append(await (await fut))
+	# 	else:
+	# 		await (await fut)
 
 	if alpha is None:
 		return images_out

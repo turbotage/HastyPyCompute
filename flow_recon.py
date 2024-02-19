@@ -90,7 +90,7 @@ async def get_smaps(lx=0.5, ls=0.0002, im_size=(320,320,320), load_from_zero = F
 	
 
 	smaps, image = await coil_est.low_res_sensemap(dataset['coords'][0], dataset['kdatas'][0], dataset['weights'][0], imsize,
-									  tukey_param=(0.95, 0.95, 0.95), exponent=3)
+									  tukey_param=(0.99, 0.99, 0.99), exponent=9)
 
 	if pipeMenon:
 		for i in range(len(dataset['weights'])):
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 	lambda_x = 0.05 #round(10**(random.uniform(0, -4)), 5)
 	lambda_s = round(10**(random.uniform(-2, -6)), 7)
 
-	#asyncio.run(get_smaps(lambda_x, lambda_s, imsize, True, pipeMenon=usePipeMenon, wexponent=0.5))
+	asyncio.run(get_smaps(lambda_x, lambda_s, imsize, False, pipeMenon=usePipeMenon, wexponent=0.5))
 
 	wexponent = [0.6, 1]
 	lambda_n = [1e-4, 1e-2, 1e-6]

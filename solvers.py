@@ -41,5 +41,6 @@ async def max_eig(xp, A, x, iter):
     for i in range(iter):
         y = await A(xup)
         maxeig = xp.linalg.norm(y)
+        print(maxeig)
         xup = y / maxeig
     return maxeig

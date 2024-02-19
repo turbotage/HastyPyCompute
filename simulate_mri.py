@@ -31,20 +31,28 @@ def crop_image(dirpath, imagefile, create_crop_image=False, load_crop_image=Fals
 			cd = f['cd'][()]
 			smaps = f['smaps'][()]
 			
-		nlen = 64
-		nx = 110
+		nlen = 72
+		nx = 70
 		ny = 70
 		nz = 130 #45
+
+		#nx = 60
+		#ny = 60
+		#nz = 70
+
 		crop_box = [(nx,nx+nlen),(ny,ny+nlen),(nz,nz+nlen)]
 		print('Cropping')
 		new_img = ic.crop_5d_3d(img, crop_box)
 		new_cd = ic.crop_4d_3d(cd, crop_box).astype(np.float32)
 		new_smaps = ic.crop_4d_3d(smaps, crop_box)
 
+		vessel_mask = new_cd > np.quantile(new_cd, 0.99)
+		vessel_mask = np.all(vessel_mask, axis=0)
+
 		if just_plot or also_plot:
 			ort.image_nd(new_img)
 			ort.image_nd(new_cd)
-			
+
 			if just_plot:
 				return (None, None)
 
@@ -52,6 +60,8 @@ def crop_image(dirpath, imagefile, create_crop_image=False, load_crop_image=Fals
 		with h5py.File(map_joiner(rename_h5(imagefile, '_cropped')), "w") as f:
 			f.create_dataset('img', data=new_img)
 			f.create_dataset('smaps', data=new_smaps)
+			f.create_dataset('cd', data=new_cd)
+			f.create_dataset('vessel_mask', data=vessel_mask)
 
 		img = new_img
 		smaps = new_smaps
@@ -90,6 +100,8 @@ def nufft_of_enced_image(img, smaps, dirpath,
 		im_size = (img.shape[2], img.shape[3], img.shape[4])
 		num_voxels = math.prod(list(im_size))
 
+		largest_kdatas = []
+
 		print('Simulating MRI camera')
 		for frame in range(nframes):
 			print('Frame: ', frame, '/', nframes)
@@ -127,15 +139,19 @@ def nufft_of_enced_image(img, smaps, dirpath,
 				encode_coords.append(coord.get())
 				encode_kdatas.append(cp.stack(coil_kdatas, axis=0).get())
 
+			largest_kdatas.append(max([np.abs(kd).max() for kd in encode_kdatas]))
+
 			frame_coords.append(encode_coords)
 			frame_kdatas.append(encode_kdatas)
+
+		largest_kdatas = max(largest_kdatas)
 
 		with h5py.File(map_joiner('simulated_coords_kdatas.h5'), "w") as f:
 			for i in range(nframes):
 				for j in range(nenc):
 					ijstr = str(i)+'_e'+str(j)
 					f.create_dataset('coords_f'+ijstr, data=frame_coords[i][j])
-					f.create_dataset('kdatas_f'+ijstr, data=frame_kdatas[i][j])
+					f.create_dataset('kdatas_f'+ijstr, data=frame_kdatas[i][j] / largest_kdatas)
 
 		print('\nCreated coords and kdatas\n')
 	elif load_kdata:
@@ -221,5 +237,6 @@ def load_true_and_smaps(dirpath):
 	map_joiner = lambda path: os.path.join(dirpath, path)
 	with h5py.File(map_joiner('background_corrected_cropped.h5'), "r") as f:
 		true_image = f['img'][()]
+		vessel_mask = f['vessel_mask'][()]
 		smaps = f['smaps'][()]
-	return true_image, smaps
+	return true_image, vessel_mask, smaps
