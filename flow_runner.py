@@ -3,6 +3,14 @@ import flow_recon_simulated as frs
 import asyncio
 import argparse
 
+
+
+
+#if __name__ == "__main__":
+#    asyncio.run(frs.big_runner([0.75], [1e-2], True))
+
+
+
 CLI=argparse.ArgumentParser()
 
 CLI.add_argument(

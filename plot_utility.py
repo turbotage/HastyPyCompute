@@ -203,11 +203,15 @@ def image_nd(image):
 	else:
 		raise RuntimeError("Only 2 <= n <= 5 is supported for image_nd")
 
-def scatter_3d(coord, marker='.', markersize=1 ,title='', axis_labels=['X Label', 'Y Label', 'Z Label']):
+def scatter_3d(coord, marker='.', markersize=1 , color=None, title='', axis_labels=['X Label', 'Y Label', 'Z Label']):
 	fig = plt.figure()
 	ax = fig.add_subplot(projection='3d')
 	
-	ax.scatter(coord[0,:], coord[1,:], coord[2,:], marker=marker, s=markersize)
+	if color is None:
+		ax.scatter(coord[0,:], coord[1,:], coord[2,:], marker=marker, s=markersize)
+	else:
+		ax.scatter(coord[0,:], coord[1,:], coord[2,:], color=color, marker=marker, s=markersize)
+
 	ax.set_xlabel(axis_labels[0])
 	ax.set_ylabel(axis_labels[1])
 	ax.set_zlabel(axis_labels[2])

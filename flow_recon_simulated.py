@@ -16,6 +16,7 @@ import asyncio
 import concurrent
 from functools import partial
 
+
 import simulate_mri as simri
 
 import orthoslicer as ort
@@ -40,11 +41,11 @@ async def find_alpha(smaps, coords, weights, imsize):
 	async def inormal(imgnew):
 		return await grad.gradient_step_x(smaps, imgnew, coords, None, weights, None, [devicectxdict])
 
-	alpha_i = 0.5 / await solvers.max_eig(np, inormal, util.complex_rand(imsize, xp=np), 10)
+	alpha_i = 1.0 / await solvers.max_eig(np, inormal, util.complex_rand(imsize, xp=np), 10)
 
 	return alpha_i
 
-async def run_full(smaps, coords, kdatas):
+async def run_full(wexponent, smaps, coords, kdatas):
 
 	nenc = 5
 	nframes = len(coords) // nenc
@@ -63,8 +64,9 @@ async def run_full(smaps, coords, kdatas):
 		full_kdatas.append(np.concatenate(kdata_stack, axis=1))
 	
 	
-	weights = dcf.pipe_menon_dcf(160*full_coords[0]/np.pi, (320,320,320), max_iter=50)
-	weights = weights / weights.max()
+	#weights = dcf.pipe_menon_dcf(160*full_coords[0]/np.pi, (320,320,320), max_iter=50)
+	#weights = weights / weights.max()
+	weights = direct_sinc.cuda_direct_sinc3_weights(full_coords[0])
 	#weights = direct_sinc.cuda_direct_sinc3_weights(coords[0])
 	#weights = direct_sinc.cuda_direct_sinc3_weights(full_coords[0])
 	weights = [weights for _ in range(nenc)]
@@ -85,13 +87,14 @@ async def run_full(smaps, coords, kdatas):
 
 		img /= np.sum(smaps.conj() * smaps, axis=0)
 
+		ort.image_nd(img)
 		print('Hello')
 
 
-	weights = [w**0.5 for w in weights]
+	weights = [w**wexponent for w in weights]
 	alpha_i = await find_alpha(smaps, full_coords, weights, imsize)
 
-	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 16, "imsize": imsize[1:]}
+	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 32, "imsize": imsize[1:]}
 
 	async def gradx(ximg, a):
 		normlist = await grad.gradient_step_x(smaps, ximg, full_coords, full_kdatas, weights,
@@ -122,23 +125,27 @@ async def run_framed(smaps, image, coords, kdatas, weights, alpha_i, lamda, max_
 
 	imsize = (nenc,) + smaps.shape[1:]
 
-	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 16, "imsize": imsize[1:]}
+	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 32, "imsize": imsize[1:]}
+
+	error_list = []
+
 	async def gradx(ximg, a):
 		normlist = await grad.gradient_step_x(smaps, ximg, coords, kdatas, weights,
 				a, [devicectxdict], calcnorm=True)
 		
-		print(f'Error = {np.array([a.item() for a in normlist[0]]).sum()}')
+		error_list.append(sum(normlist[0]))
 
 	proxx = prox.svtprox(lamda, np.array([8, 8, 8]), np.array([8, 8, 8]), 3)
 
-	await solvers.fista(np, image, alpha_i, gradx, proxx, max_iter, callback)
+	for mi in max_iter:
+		await solvers.fista(np, image, alpha_i, gradx, proxx, mi, callback)
+
+	return error_list
 
 
 async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_weights, run_find_alpha, start_method, only_init, with_noise):
 
-	base_path = '/home/turbotage/Documents/4DRecon/'
-
-	coords, kdatas, nframes, nenc = simri.load_coords_kdatas(base_path)
+	coords, kdatas, nframes, nenc, kdatamax = simri.load_coords_kdatas(base_path)
 	
 	list = []
 	for i in range(nframes):
@@ -160,15 +167,11 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 
 	true_image, vessel_mask, smaps = simri.load_true_and_smaps(base_path)
 	true_image = true_image.reshape((nframes * nenc,) + smaps.shape[1:])
-	true_image /= np.abs(np.mean(true_image))
 	true_image_norm = np.linalg.norm(true_image)
-
-	true_phases = np.angle(true_image[...,vessel_mask])
-	true_phase_norm = np.linalg.norm(true_phases)
 
 	if create_image_full:
 		print('Creating full image')
-		image_full = await run_full(smaps, coords, kdatas)
+		image_full = await run_full(wexponent, smaps, coords, kdatas)
 		with h5py.File(base_path + 'reconed_full.h5', 'w') as hf:
 			hf.create_dataset('image', data=image_full)
 	else:
@@ -179,8 +182,9 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 		print('Creating framed weights')
 		weights = []
 		for i in range(nframes):
-			w = dcf.pipe_menon_dcf(160*coords[nenc*i]/np.pi, (320,320,320), max_iter=50)
-			w = w / w.max()
+			#w = dcf.pipe_menon_dcf(160*coords[nenc*i]/np.pi, (320,320,320), max_iter=50)
+			#w = w / w.max()
+			w = direct_sinc.cuda_direct_sinc3_weights(coords[nenc*i])
 			for j in range(nenc):
 				weights.append(w)
 		with h5py.File(base_path + 'reconed_framed_weights.h5', 'w') as hf:
@@ -203,7 +207,7 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 		np.save(base_path + f"alpha_{wexponent}.npy", alpha_i)
 	else:
 		print('Loading alpha')
-		alpha_i = np.load(base_path + 'alpha_i.npy').item()
+		alpha_i = np.load(base_path + f"alpha_{wexponent}.npy").item()
 
 	if only_init:
 		return
@@ -235,10 +239,11 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 
 	err_rel = []
 	err_max = []
+	vessel_values = []
 
-	err_phase_rel = []
-	err_phase_max = []
-	err_phase_mean = []
+	time_last = np.array(time.time())
+
+	saving_images = []
 
 	def callback(x,iter):
 
@@ -248,40 +253,41 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 				for enc in range(nenc):
 					xscaled[frame*nenc + enc,...] += image_full[enc,...]
 
-		xscaled = xscaled / np.abs(np.mean(xscaled))
+		xscaled *= kdatamax
 
 		xdiff = xscaled - true_image
 
 		err_rel.append(np.linalg.norm(xdiff) / true_image_norm)
 		err_max.append(np.max(np.abs(xdiff)))
 
-		xphases = np.angle(xscaled[...,vessel_mask])
-		phase_diff = xphases - true_phases
-		phase_diff = np.arctan2(np.sin(phase_diff), np.cos(phase_diff))
+		vessel_values.append(xscaled[...,vessel_mask])
 
-		phase_diff = np.abs(phase_diff)
-		err_phase_rel.append(np.linalg.norm(phase_diff) / true_phase_norm)
-		err_phase_max.append(np.max(phase_diff))
-		err_phase_mean.append(np.mean(phase_diff))
 		
+		time_now = time.time()
+		print(f'Iter {iter}, Time for iter: {time_now - time_last} s')
+		time_last.fill(time_now)
 
-		if iter in max_iters:
-			np.save(base_path + f"results/err_rel_w{wexponent:.3e}_l{lamda:.3e}_i{iter}_{start_method}.npy", np.array(err_rel))
-			np.save(base_path + f"results/err_max_w{wexponent:.3e}_l{lamda:.3e}_i{iter}_{start_method}.npy", np.array(err_max))
-			np.save(base_path + f"results/err_phase_rel_w{wexponent:.3e}_l{lamda:.3e}_i{iter}_{start_method}.npy", np.array(err_phase_rel))
-			np.save(base_path + f"results/err_phase_max_w{wexponent:.3e}_l{lamda:.3e}_i{iter}_{start_method}.npy", np.array(err_phase_max))
-			np.save(base_path + f"results/err_phase_mean_w{wexponent:.3e}_l{lamda:.3e}_i{iter}_{start_method}.npy", np.array(err_phase_mean))
+		if iter == 10 or iter==50 or iter==150 or iter==max_iters[-1]-1:
+			saving_images.append((xscaled, iter))
 
-			#with h5py.File(base_path + f"results/reconed_framed_w{wexponent:.3e}_l{lamda:.3e}_i{i}_{start_method}.h5", 'w') as hf:
-			#	hf.create_dataset('image', data=x)
 
 	callback(img0, 0)
 
-	await run_framed(smaps, img0, coords, kdatas, weights, alpha_i, lamda, max_iters[-1], callback)
+	await run_framed(smaps, img0, coords, kdatas, weights, alpha_i, lamda, max_iters, callback)
+
+	with h5py.File(base_path + f"results/err_w{wexponent:.2e}_l{lamda:.2e}_{start_method}.h5", 'w') as hf:
+		hf.create_dataset('err_rel', data=np.array(err_rel))
+		hf.create_dataset('err_max', data=np.array(err_max))
+		hf.create_dataset('vessel_values', data=np.stack(vessel_values, axis=0))
+		for (img, iter) in saving_images:
+			hf.create_dataset(f'img_{iter}', data=img)
+
+
+
 
 async def create_noise(noise_fraction):
 	# calc power of signal
-	coords, kdatas, nframes, nenc = simri.load_coords_kdatas(base_path)
+	coords, kdatas, nframes, nenc, kdatamax = simri.load_coords_kdatas(base_path)
 
 	power = 0
 	signal_length = 0
@@ -304,9 +310,9 @@ async def create_noise(noise_fraction):
 	np.savez(base_path + 'noise_vec', *noise)
 
 async def big_runner(wexps, lambdas, with_noise):
-	max_iters = [200, 201]
+	max_iters = [300]
 	for w in wexps:
-		await runner(w, 0, 0, False, False, True, "", True, with_noise)
+		#await runner(w, 0, 0, False, False, True, "", True, with_noise)
 		for l in lambdas:
 			await runner(w, l, max_iters, False, False, False, "diff", False, with_noise)
 			await runner(w, l, max_iters, False, False, False, "zero", False, with_noise)
@@ -314,5 +320,6 @@ async def big_runner(wexps, lambdas, with_noise):
 
 if __name__ == "__main__":
 
-	#asyncio.run(create_noise(0.001))
-	asyncio.run(runner(0.5, 0, 0, True, False, False, "", True, True))
+	asyncio.run(create_noise(0.0002))
+	asyncio.run(runner(0.5, 0, 0, True, True, True, "", True, True))
+	#asyncio.run(runner(0.5, 0, 0, False, True, True, "", True, True))

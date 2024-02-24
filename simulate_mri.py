@@ -1,8 +1,11 @@
 import numpy as np
 import h5py
 
+import matplotlib.pyplot as plt
 import cupy as cp
 import cufinufft
+
+from scipy.ndimage import gaussian_filter
 
 import plot_utility as pu
 import orthoslicer as ort
@@ -46,12 +49,16 @@ def crop_image(dirpath, imagefile, create_crop_image=False, load_crop_image=Fals
 		new_cd = ic.crop_4d_3d(cd, crop_box).astype(np.float32)
 		new_smaps = ic.crop_4d_3d(smaps, crop_box)
 
-		vessel_mask = new_cd > np.quantile(new_cd, 0.99)
+		new_cd = gaussian_filter(new_cd, sigma=0.8)
+
+		vessel_mask = new_cd > np.quantile(new_cd, 0.995)
 		vessel_mask = np.all(vessel_mask, axis=0)
 
 		if just_plot or also_plot:
 			ort.image_nd(new_img)
 			ort.image_nd(new_cd)
+			#ort.image_nd(new_cd + vessel_mask[None,...]*50.0)
+			ort.image_nd(vessel_mask.astype(np.float32), max_clim=True)
 
 			if just_plot:
 				return (None, None)
@@ -109,13 +116,23 @@ def nufft_of_enced_image(img, smaps, dirpath,
 			encode_coords = []
 			encode_kdatas = []
 
-			xangles = np.pi * np.random.rand(nspokes).astype(np.float32)
+			xangles = np.random.rand(nspokes).astype(np.float32)
+			xangles = np.arccos(1.0 - 2.0*xangles).astype(np.float32)
 			zangles = 2 * np.pi * np.random.rand(nspokes).astype(np.float32)
+
+			#xangles = np.pi * np.linspace(0, 1, nspokes, endpoint=False).astype(np.float32)
+			#zangles = 2*np.pi * np.ones((nspokes,)).astype(np.float32) #np.ones(0, 1, nspokes, endpoint=False).astype(np.float32)
 
 			coord = np.ascontiguousarray(ic.create_coords(nspokes, nsamp_per_spoke, im_size, method, False, crop_factor, xangles, zangles))
 
 			if also_plot and frame == 0:
 				pu.scatter_3d(coord)
+				plt.figure()
+				plt.plot(xangles, zangles, 'b*')
+				plt.show()
+				print(' (N K-Space Points) / (N Voxels) ratio: ', coord.shape[1] / num_voxels)				
+				print(' (N K-Space Points) / (N Voxels) ratio: ', coord.shape[1] / num_voxels)
+
 
 			for encode in range(nenc):
 				print('Encode: ', encode, '/', nenc, '  Creating coordinates')
@@ -139,7 +156,7 @@ def nufft_of_enced_image(img, smaps, dirpath,
 				encode_coords.append(coord.get())
 				encode_kdatas.append(cp.stack(coil_kdatas, axis=0).get())
 
-			largest_kdatas.append(max([np.abs(kd).max() for kd in encode_kdatas]))
+			largest_kdatas.append(max([np.quantile(np.abs(kd), 0.90).max() for kd in encode_kdatas]))
 
 			frame_coords.append(encode_coords)
 			frame_kdatas.append(encode_kdatas)
@@ -152,6 +169,7 @@ def nufft_of_enced_image(img, smaps, dirpath,
 					ijstr = str(i)+'_e'+str(j)
 					f.create_dataset('coords_f'+ijstr, data=frame_coords[i][j])
 					f.create_dataset('kdatas_f'+ijstr, data=frame_kdatas[i][j] / largest_kdatas)
+			f.create_dataset('maxkdata', data=largest_kdatas)
 
 		print('\nCreated coords and kdatas\n')
 	elif load_kdata:
@@ -213,6 +231,7 @@ def load_coords_kdatas(dirpath):
 	nenc = 0
 	frame_coords = []
 	frame_kdatas = []
+
 	with h5py.File(map_joiner('simulated_coords_kdatas.h5'), "r") as f:
 		nframes, nenc = frames_and_encodes(list(f.keys()))
 		for i in range(nframes):
@@ -224,8 +243,9 @@ def load_coords_kdatas(dirpath):
 				encode_kdatas.append(f['kdatas_f'+ijstr][()])
 			frame_coords.append(encode_coords)
 			frame_kdatas.append(encode_kdatas)
+			kdatamax = f['maxkdata'][()]
 	print('\nLoaded coords and kdatas\n')
-	return (frame_coords, frame_kdatas, nframes, nenc)
+	return (frame_coords, frame_kdatas, nframes, nenc, kdatamax)
 
 def load_smaps(dirpath):
 	map_joiner = lambda path: os.path.join(dirpath, path)

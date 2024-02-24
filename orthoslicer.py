@@ -11,7 +11,7 @@ import plot_utility as pu
 
 class HastyOrthoSlicer:
 
-	def __init__(self, data, title=None):
+	def __init__(self, data, title=None, max_clim=False):
 		self._is_complex_dtype = data.dtype == np.complex64 or data.dtype == np.complex128
 		if self._is_complex_dtype:
 			self._phase = np.angle(data)
@@ -72,7 +72,7 @@ class HastyOrthoSlicer:
 		self._volume_dims = data.shape[3:]
 		self._current_vol_data = data[:, :, :, ...] if data.ndim > 3 else data
 		self._data = data
-		self._clim = np.percentile(data, (1.0, 99.0))
+		self._clim = [np.min(data), np.max(data)] if max_clim else np.percentile(data, (1.0, 99.0))
 		del data
 
 		# ^ +---------+   ^ +---------+
@@ -530,9 +530,11 @@ class HastyOrthoSlicer:
 				return
 			self._data = self._phase
 			self.clim(self._phase_clim)
+			return
 		if text == 'absimg':
 			self._data = self._abs
 			self.clim(self._abs_clim)
+			return
 
 		evalamda = lambda absimg, phaseimg: eval(text)
 		try:
@@ -560,7 +562,7 @@ class HastyOrthoSlicer:
 				ax.draw_artist(self._volume_ax_objs[key])
 			ax.figure.canvas.blit(ax.bbox)
 
-def image_nd(img):
+def image_nd(img, max_clim=False):
 	
 	if img.ndim == 3:
 		img = img[None, None, ...]
@@ -568,7 +570,7 @@ def image_nd(img):
 		img = img[None,...]
 	
 	dataf = np.flip(img.transpose((2,3,4,0,1)), axis=2)
-	slicer = HastyOrthoSlicer(dataf)
+	slicer = HastyOrthoSlicer(dataf, max_clim=max_clim)
 	slicer.show()
 
 if __name__ == '__main__':
