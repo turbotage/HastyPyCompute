@@ -212,9 +212,10 @@ def scatter_3d(coord, marker='.', markersize=1 , color=None, title='', axis_labe
 	else:
 		ax.scatter(coord[0,:], coord[1,:], coord[2,:], color=color, marker=marker, s=markersize)
 
-	ax.set_xlabel(axis_labels[0])
-	ax.set_ylabel(axis_labels[1])
-	ax.set_zlabel(axis_labels[2])
+	if axis_labels is not None:
+		ax.set_xlabel(axis_labels[0])
+		ax.set_ylabel(axis_labels[1])
+		ax.set_zlabel(axis_labels[2])
 
 	plt.title(title)
 

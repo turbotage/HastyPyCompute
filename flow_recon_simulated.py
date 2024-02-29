@@ -31,9 +31,6 @@ import grad
 
 import prox
 
-#base_path = '/media/buntess/OtherSwifty/Data/Garpen/Ena/'
-base_path = '/home/turbotage/Documents/4DRecon/'
-
 
 async def find_alpha(smaps, coords, weights, imsize):
 	devicectxdict = {"dev": cp.cuda.Device(0), "ntransf": 16, "imsize": imsize[1:]}
@@ -64,14 +61,11 @@ async def run_full(wexponent, smaps, coords, kdatas):
 		full_kdatas.append(np.concatenate(kdata_stack, axis=1))
 	
 	
-	#weights = dcf.pipe_menon_dcf(160*full_coords[0]/np.pi, (320,320,320), max_iter=50)
-	#weights = weights / weights.max()
-	weights = direct_sinc.cuda_direct_sinc3_weights(full_coords[0])
-	#weights = direct_sinc.cuda_direct_sinc3_weights(coords[0])
-	#weights = direct_sinc.cuda_direct_sinc3_weights(full_coords[0])
+	weights = np.sum(np.square(full_coords[0]), axis=0)
+	weights = (1e-4 + weights) * np.exp(-weights / ((4 * np.pi*np.pi)))
+	weights = weights / weights.max()
+
 	weights = [weights for _ in range(nenc)]
-		
-	#weights = [(w / w.max())**0.5 for w in weights]
 
 	img_check = True
 	if img_check:
@@ -104,17 +98,13 @@ async def run_full(wexponent, smaps, coords, kdatas):
 
 	image = np.zeros(imsize, dtype=np.complex64)
 
-	proxx = prox.dctprox(2.0)
-
-	#async def proxx(x, a, z):
-	#	pass
+	proxx = prox.dctprox(1.0)
 
 	def callback(x, i):
 		#ort.image_nd(x)
 		pass
 
-
-	await solvers.fista(np, image, alpha_i, gradx, proxx, 100, callback=callback)
+	await solvers.fista(np, image, alpha_i, gradx, proxx, 200, callback=callback)
 
 	return image
 
@@ -168,6 +158,7 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 	true_image, vessel_mask, smaps = simri.load_true_and_smaps(base_path)
 	true_image = true_image.reshape((nframes * nenc,) + smaps.shape[1:])
 	true_image_norm = np.linalg.norm(true_image)
+	true_image_median = np.median(np.abs(true_image))
 
 	if create_image_full:
 		print('Creating full image')
@@ -184,7 +175,11 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 		for i in range(nframes):
 			#w = dcf.pipe_menon_dcf(160*coords[nenc*i]/np.pi, (320,320,320), max_iter=50)
 			#w = w / w.max()
-			w = direct_sinc.cuda_direct_sinc3_weights(coords[nenc*i])
+			#w = direct_sinc.cuda_direct_sinc3_weights(coords[nenc*i])
+			w = np.sum(np.square(coords[nenc*i]), axis=0)
+			w = (1e-4 + w) * np.exp(-w / ((4 * np.pi*np.pi)))
+			w = w / w.max()
+
 			for j in range(nenc):
 				weights.append(w)
 		with h5py.File(base_path + 'reconed_framed_weights.h5', 'w') as hf:
@@ -253,7 +248,7 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 				for enc in range(nenc):
 					xscaled[frame*nenc + enc,...] += image_full[enc,...]
 
-		xscaled *= kdatamax
+		xscaled *= true_image_median / np.median(np.abs(xscaled))
 
 		xdiff = xscaled - true_image
 
@@ -267,7 +262,7 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 		print(f'Iter {iter}, Time for iter: {time_now - time_last} s')
 		time_last.fill(time_now)
 
-		if iter == 10 or iter==50 or iter==150 or iter==max_iters[-1]-1:
+		if iter == 10 or iter==50 or iter==max_iters[-1]-1:
 			saving_images.append((xscaled, iter))
 
 
@@ -275,7 +270,7 @@ async def runner(wexponent, lamda, max_iters, create_image_full, create_framed_w
 
 	await run_framed(smaps, img0, coords, kdatas, weights, alpha_i, lamda, max_iters, callback)
 
-	with h5py.File(base_path + f"results/err_w{wexponent:.2e}_l{lamda:.2e}_{start_method}.h5", 'w') as hf:
+	with h5py.File(base_path + f"err_w{wexponent:.2e}_l{lamda:.2e}_{start_method}.h5", 'w') as hf:
 		hf.create_dataset('err_rel', data=np.array(err_rel))
 		hf.create_dataset('err_max', data=np.array(err_max))
 		hf.create_dataset('vessel_values', data=np.stack(vessel_values, axis=0))
@@ -309,17 +304,31 @@ async def create_noise(noise_fraction):
 
 	np.savez(base_path + 'noise_vec', *noise)
 
-async def big_runner(wexps, lambdas, with_noise):
-	max_iters = [300]
+
+base_base_path = '/home/turbotage/Documents/4DRecon/'
+base_path = '/home/turbotage/Documents/4DRecon/'
+
+
+async def big_runner(wexps, lambdas, noise_level, nspokes, samp, is_add):
+	global base_path
+	
+	base_path = base_base_path + f"run_nspoke{nspokes}_samp{samp}_noise{noise_level:.2e}/"
+
+	if not is_add:
+		#await create_noise(noise_level)
+		#await runner(0.25, 0, 0, True, True, True, "", True, True)
+		print('Creating new run, is_add was False')
+
+	max_iters = [200]
 	for w in wexps:
-		#await runner(w, 0, 0, False, False, True, "", True, with_noise)
+		await runner(w, 0, 0, False, False, True, "", True, True)
 		for l in lambdas:
-			await runner(w, l, max_iters, False, False, False, "diff", False, with_noise)
-			await runner(w, l, max_iters, False, False, False, "zero", False, with_noise)
-			await runner(w, l, max_iters, False, False, False, "mean", False, with_noise)
+			await runner(w, l, max_iters, False, False, False, "diff", False, True)
+			await runner(w, l, max_iters, False, False, False, "zero", False, True)
+			await runner(w, l, max_iters, False, False, False, "mean", False, True)
 
 if __name__ == "__main__":
 
-	asyncio.run(create_noise(0.0002))
-	asyncio.run(runner(0.5, 0, 0, True, True, True, "", True, True))
+	#asyncio.run(runner(0.5, 0, 0, True, True, True, "", True, True))
 	#asyncio.run(runner(0.5, 0, 0, False, True, True, "", True, True))
+	print('')

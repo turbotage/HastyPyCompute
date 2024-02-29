@@ -28,7 +28,7 @@ def create_spoke(samp_per_spoke, method='PCVIPR', noise=0.005, scale_factor=1.0,
 		spoke = np.zeros((3,samp_per_spoke), dtype=np.float32)
 		spoke[0,:] = np.random.normal(scale=noise, size=samp_per_spoke)
 		spoke[1,:] = np.random.normal(scale=noise, size=samp_per_spoke)
-		spoke[2,:] = np.pi*np.linspace(-(1.0/3.0), 1.0, samp_per_spoke).astype(np.float32)
+		spoke[2,:] = np.pi*np.linspace(-0.5, 1.0, samp_per_spoke).astype(np.float32)
 		spoke[2,:] += np.random.normal(scale=noise, size=samp_per_spoke)
 
 		if xangle is None:

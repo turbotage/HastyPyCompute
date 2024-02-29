@@ -107,11 +107,11 @@ class DeviceCtx:
 			out *= self.normfactor
 		elif self.type == "none":
 			if self.coord.shape[0] == 1:
-				cufinufft.nufft1d2(x=self.coord[0], data=input, out=out, eps=1e-4)
+				cufinufft.nufft1d2(x=self.coord[0], data=input, out=out, eps=1e-5)
 			elif self.coord.shape[0] == 2:
-				cufinufft.nufft2d2(x=self.coord[0], y=self.coord[1], data=input, out=out, eps=1e-4)
+				cufinufft.nufft2d2(x=self.coord[0], y=self.coord[1], data=input, out=out, eps=1e-5)
 			elif self.coord.shape[0] == 3:
-				cufinufft.nufft3d2(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, out=out, eps=1e-4)
+				cufinufft.nufft3d2(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, out=out, eps=1e-5)
 
 
 	def backward_execute(self, input, out):
@@ -121,11 +121,11 @@ class DeviceCtx:
 			#out *= self.normfactor
 		elif self.type == "none":
 			if self.coord.shape[0] == 1:
-				cufinufft.nufft1d1(x=self.coord[0], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
+				cufinufft.nufft1d1(x=self.coord[0], data=input, n_modes=out.shape[1:], out=out, eps=1e-5)
 			elif self.coord.shape[0] == 2:
-				cufinufft.nufft2d1(x=self.coord[0], y=self.coord[1], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
+				cufinufft.nufft2d1(x=self.coord[0], y=self.coord[1], data=input, n_modes=out.shape[1:], out=out, eps=1e-5)
 			elif self.coord.shape[0] == 3:
-				cufinufft.nufft3d1(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, n_modes=out.shape[1:], out=out, eps=1e-4)
+				cufinufft.nufft3d1(x=self.coord[0], y=self.coord[1], z=self.coord[2], data=input, n_modes=out.shape[1:], out=out, eps=1e-5)
 
 
 # Inputs shall be on CPU or GPU, computes x = x - alpha * S^HN^H(W(NSx-b)) or returns S^HN^HWN^HSx
