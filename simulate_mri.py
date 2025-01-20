@@ -12,6 +12,8 @@ import orthoslicer as ort
 
 import image_creation as ic
 
+import post_processing as pp
+
 import math
 
 import os
@@ -46,6 +48,33 @@ def crop_image(inpath, outpath, imagefile, just_plot=False, also_plot=False):
 
 	vessel_mask = new_cd > np.quantile(new_cd, 0.995)
 	vessel_mask = np.all(vessel_mask, axis=0)
+
+	#ort.image_nd(np.abs(new_img))
+
+	PP = pp.PostP_4DFlow(1100, new_img)
+	PP.solve_velocity()
+	PP.update_cd()
+	vel_mag = np.sqrt(np.sum(np.square(PP.vel), axis=1))
+	ort.image_nd(PP.vel)
+	ort.image_nd(vel_mag)
+
+	smooth_mag = True
+	if smooth_mag:
+		avg_weight = 4
+		for enc in range(new_img.shape[1]):
+			avg_mag = np.mean(np.abs(new_img[:,enc,...]), axis=0)
+			for frame_idx in range(new_img.shape[0]):
+				phase = np.angle(new_img[frame_idx,enc,...])
+				new_img[frame_idx,enc,...] = np.exp(1j*phase)*(avg_weight*avg_mag[None,...] + np.abs(new_img[frame_idx,enc,...])) / (avg_weight + 1)
+
+	PP = pp.PostP_4DFlow(1100, new_img)
+	PP.solve_velocity()
+	PP.update_cd()
+	vel_mag = np.sqrt(np.sum(np.square(PP.vel), axis=1))
+	ort.image_nd(PP.vel)
+	ort.image_nd(vel_mag)
+
+	#ort.image_nd(np.abs(new_img))
 
 	if just_plot or also_plot:
 		ort.image_nd(new_img)
